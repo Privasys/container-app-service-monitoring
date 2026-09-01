@@ -160,7 +160,7 @@ func (s *server) faulty(w http.ResponseWriter) bool {
 
 func (s *server) breakIt(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Seconds int `json:"seconds"`
+		Seconds int  `json:"seconds"`
 		Slow    bool `json:"slow"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)

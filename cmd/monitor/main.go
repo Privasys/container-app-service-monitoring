@@ -172,7 +172,7 @@ func run(log *slog.Logger) error {
 		log.Info("self-configured for development")
 	}
 
-	recordBoot(log, mon, cfg)
+	recordBoot(log, mon)
 
 	go scheduler.Run(ctx)
 	go sender.Run(ctx)
@@ -226,7 +226,7 @@ func publishExtensions(ctx context.Context, log *slog.Logger, manager *platform.
 // This is the honesty the coverage figure rests on. A monitor that was
 // not running did not observe a service that was up, and a gap in the
 // readings is otherwise indistinguishable from a quiet period.
-func recordBoot(log *slog.Logger, mon *core.Monitor, cfg *config.Config) {
+func recordBoot(log *slog.Logger, mon *core.Monitor) {
 	detail := "the monitor started"
 	if last, err := mon.LastBoot(); err == nil && last != nil {
 		gap := mon.Now() - last.At
@@ -237,7 +237,6 @@ func recordBoot(log *slog.Logger, mon *core.Monitor, cfg *config.Config) {
 	if err := mon.RecordRuntimeEvent(model.EventBoot, detail); err != nil {
 		log.Error("could not record the boot", "error", err)
 	}
-	_ = cfg
 }
 
 func humanDuration(seconds int64) string {

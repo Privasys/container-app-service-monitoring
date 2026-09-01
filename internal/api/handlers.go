@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/availability"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
-	"github.com/Privasys/container-app-service-monitoring/internal/pack"
 )
 
 // -- always available ------------------------------------------------------
@@ -798,17 +796,4 @@ func (s *Server) prune(req *request) (any, error) {
 	}
 	_ = decode(req.r, &body)
 	return req.mon.PruneSamples(req.p, body.Before)
-}
-
-// -- helpers ---------------------------------------------------------------
-
-// availablePacks lists the service models baked into the image, for the
-// configure form's dropdown.
-func (s *Server) availablePacks() []string { return pack.Available(s.PackDir) }
-
-func nowOr(v int64) int64 {
-	if v > 0 {
-		return v
-	}
-	return time.Now().Unix()
 }

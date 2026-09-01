@@ -5,12 +5,10 @@ package api
 
 import (
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
-	"github.com/Privasys/container-app-service-monitoring/internal/availability"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
@@ -415,13 +413,3 @@ func maxInt64(a, b int64) int64 {
 	}
 	return a
 }
-
-// formatPPM is the percentage rendering the templates use.
-func formatPPM(ppm int64) string {
-	if ppm < 0 {
-		return "no data"
-	}
-	return availability.FormatPPM(ppm)
-}
-
-var _ = fmt.Sprintf

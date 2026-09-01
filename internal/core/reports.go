@@ -94,7 +94,7 @@ func (m *Monitor) GenerateReport(p *auth.Principal, req ReportRequest) (*model.R
 		}
 		evidenceHash := hashBuckets(evidenceBuckets)
 
-		tr, err := m.commit(tx, model.Envelope{
+		if _, err := m.commit(tx, model.Envelope{
 			Kind: model.KindReportIssue, Service: svc.ID, ObjectIDs: []string{id},
 			Author: p.Author(), Timestamp: m.Now(),
 			Message: fmt.Sprintf("Report %s availability for %s", svc.Name, period.Label),
@@ -114,11 +114,9 @@ func (m *Monitor) GenerateReport(p *auth.Principal, req ReportRequest) (*model.R
 				"generated_at":          built.GeneratedAt,
 				"txid":                  model.TxIDPlaceholder,
 			},
-		}})
-		if err != nil {
+		}}); err != nil {
 			return err
 		}
-		_ = tr
 
 		// Anchor after the write, so the proof of the report row is taken
 		// at the state that contains it.
