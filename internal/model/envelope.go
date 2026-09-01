@@ -125,7 +125,13 @@ func (e *Envelope) Validate() error {
 	if e.Kind == "" {
 		return errors.New("envelope: kind is required")
 	}
-	if e.Tenant == "" {
+	// A tenant is required for everything about a watched service, and
+	// cannot be for the instance's own history: the first boot happens
+	// before anyone has said which customer this monitor serves, and
+	// that boot is exactly the one whose gap the coverage figure needs.
+	// Requiring a tenant there would drop the first event on the floor
+	// and leave the record starting after the interesting part.
+	if e.Tenant == "" && e.Kind != KindRuntimeEvent {
 		return errors.New("envelope: tenant is required")
 	}
 	if e.Author.Sub == "" {

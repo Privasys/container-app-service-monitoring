@@ -456,3 +456,51 @@ func recompute(t *testing.T, report *model.Report) availability.Output {
 	}
 	return out
 }
+
+// The first boot happens before anyone has said which customer this
+// monitor serves. It still has to be recorded: the coverage figure is
+// only honest if the monitor's own absences are in the record, and the
+// first of them is the one before it was configured.
+func TestTheFirstBootIsRecordedBeforeConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	material, err := keys.Load(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secrets.Open(filepath.Join(dir, "secrets"), material.Master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck, _, err := material.CommitmentKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "record"), ck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+
+	// No tenant: this instance has not been configured.
+	egress := journey.NewAllowlist()
+	egress.Open()
+	mon := core.New(st, material, vault, egress, core.Options{Name: "test"})
+
+	if err := mon.RecordRuntimeEvent(model.EventBoot, "the monitor started"); err != nil {
+		t.Fatalf("the first boot was not recorded: %v", err)
+	}
+	events, err := mon.RuntimeEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != model.EventBoot {
+		t.Fatalf("events = %v, want one boot", events)
+	}
+	last, err := mon.LastBoot()
+	if err != nil || last == nil {
+		t.Fatalf("LastBoot = %v, %v", last, err)
+	}
+}
