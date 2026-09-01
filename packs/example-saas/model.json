@@ -1,0 +1,186 @@
+{
+  "name": "example-saas",
+  "version": "1.0.0",
+  "description": "The reference service model. It watches the small target service shipped in tools/target, and it is what the end-to-end suite drives: a login with a real credential, an order placed and read back, and a cleanup that runs whether or not the assertions held.",
+
+  "service": {
+    "name": "Example SaaS",
+    "slug": "example-saas",
+    "description": "The reference service used to demonstrate and test this monitor.",
+    "timezone": "Europe/London",
+    "visibility": "public",
+    "maintenance_lead_time": 86400,
+    "coverage_floor_ppm": 990000
+  },
+
+  "schedule": {
+    "name": "24x7",
+    "timezone": "Europe/London",
+    "windows": [
+      { "weekday": 0, "start_min": 0, "end_min": 1440 },
+      { "weekday": 1, "start_min": 0, "end_min": 1440 },
+      { "weekday": 2, "start_min": 0, "end_min": 1440 },
+      { "weekday": 3, "start_min": 0, "end_min": 1440 },
+      { "weekday": 4, "start_min": 0, "end_min": 1440 },
+      { "weekday": 5, "start_min": 0, "end_min": 1440 },
+      { "weekday": 6, "start_min": 0, "end_min": 1440 }
+    ]
+  },
+
+  "components": [
+    {
+      "ref": "api",
+      "name": "Order API",
+      "description": "Placing and reading orders, which is what the agreement is about.",
+      "user_weight": 4000,
+      "rollup": "any",
+      "position": 1,
+      "showcase": true
+    },
+    {
+      "ref": "site",
+      "name": "Public site",
+      "description": "The unauthenticated surface.",
+      "user_weight": 200,
+      "rollup": "any",
+      "position": 2,
+      "showcase": true
+    }
+  ],
+
+  "secrets": [
+    {
+      "name": "example_user",
+      "hosts": ["127.0.0.1", "localhost"],
+      "description": "The dedicated least-privilege account the order journey logs in as."
+    },
+    {
+      "name": "example_password",
+      "hosts": ["127.0.0.1", "localhost"],
+      "description": "That account's password. It is sealed to this build and refused for any other host."
+    }
+  ],
+
+  "monitors": [
+    {
+      "name": "Place and read an order",
+      "component": "api",
+      "interval_seconds": 30,
+      "timeout_seconds": 20,
+      "failure_threshold": 2,
+      "recovery_threshold": 2,
+      "latency_budget_ms": 2000,
+      "steps": [
+        {
+          "name": "log in",
+          "kind": "http",
+          "method": "POST",
+          "url": "http://127.0.0.1:18081/login",
+          "headers": { "Content-Type": "application/json" },
+          "body": "{\"user\":\"{{ secrets.example_user }}\",\"password\":\"{{ secrets.example_password }}\"}",
+          "expect_status": [200],
+          "extractions": [
+            { "var": "token", "source": "json", "target": "token", "secret": true }
+          ]
+        },
+        {
+          "name": "place an order",
+          "kind": "http",
+          "method": "POST",
+          "url": "http://127.0.0.1:18081/orders",
+          "headers": {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer {{ vars.token }}"
+          },
+          "body": "{\"reference\":\"check-{{ gen.uuid }}\"}",
+          "expect_status": [201],
+          "assertions": [
+            {
+              "source": "json",
+              "target": "status",
+              "op": "eq",
+              "value": "accepted",
+              "message": "the order was not accepted"
+            }
+          ],
+          "extractions": [
+            { "var": "order_id", "source": "json", "target": "id" }
+          ]
+        },
+        {
+          "name": "read the order back",
+          "kind": "http",
+          "method": "GET",
+          "url": "http://127.0.0.1:18081/orders/{{ vars.order_id }}",
+          "headers": { "Authorization": "Bearer {{ vars.token }}" },
+          "expect_status": [200],
+          "assertions": [
+            {
+              "source": "json",
+              "target": "id",
+              "op": "eq",
+              "value": "{{ vars.order_id }}",
+              "message": "the order read back is not the order placed"
+            }
+          ]
+        },
+        {
+          "name": "remove the order",
+          "kind": "http",
+          "cleanup": true,
+          "method": "DELETE",
+          "url": "http://127.0.0.1:18081/orders/{{ vars.order_id }}",
+          "headers": { "Authorization": "Bearer {{ vars.token }}" },
+          "expect_status": [204, 404]
+        }
+      ]
+    },
+    {
+      "name": "The site answers",
+      "component": "site",
+      "interval_seconds": 60,
+      "timeout_seconds": 15,
+      "failure_threshold": 2,
+      "recovery_threshold": 1,
+      "steps": [
+        {
+          "name": "fetch the health endpoint",
+          "kind": "http",
+          "method": "GET",
+          "url": "http://127.0.0.1:18081/health",
+          "expect_status": [200],
+          "assertions": [
+            { "source": "json", "target": "status", "op": "eq", "value": "ok" }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "objectives": [
+    {
+      "name": "Monthly availability",
+      "metric": "availability",
+      "target_ppm": 999000,
+      "window": "calendar_month",
+      "credits": [
+        { "below_ppm": 999000, "credit_percent": 10 },
+        { "below_ppm": 990000, "credit_percent": 25 },
+        { "below_ppm": 950000, "credit_percent": 50 }
+      ]
+    },
+    {
+      "name": "Monthly user-weighted availability",
+      "metric": "user_availability",
+      "target_ppm": 999500,
+      "window": "calendar_month"
+    },
+    {
+      "name": "Order API responsiveness",
+      "metric": "latency_p95",
+      "target_ppm": 990000,
+      "window": "calendar_month",
+      "latency_budget_ms": 2000
+    }
+  ]
+}

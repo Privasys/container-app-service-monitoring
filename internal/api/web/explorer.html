@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitor explorer</title>
+<link rel="stylesheet" href="status.css">
+<link rel="stylesheet" href="explorer.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1>Monitor explorer</h1>
+    <p class="muted">
+      The operator console is a client of the same API everything else uses.
+      There is no privileged path into the record that only this page can take.
+    </p>
+    <div class="connect">
+      <input id="token" type="password" placeholder="Bearer token" autocomplete="off">
+      <button id="connect">Connect</button>
+      <span id="who" class="muted"></span>
+    </div>
+  </div>
+</header>
+
+<nav class="wrap tabs">
+  <button data-tab="log" class="active">Log</button>
+  <button data-tab="monitors">Monitors</button>
+  <button data-tab="incidents">Incidents</button>
+  <button data-tab="maintenance">Maintenance</button>
+  <button data-tab="reports">Reports</button>
+  <button data-tab="checkpoints">Checkpoints</button>
+  <button data-tab="credentials">Credentials</button>
+</nav>
+
+<main class="wrap">
+  <section id="panel-log" class="panel"></section>
+  <section id="panel-monitors" class="panel" hidden></section>
+  <section id="panel-incidents" class="panel" hidden></section>
+  <section id="panel-maintenance" class="panel" hidden></section>
+  <section id="panel-reports" class="panel" hidden></section>
+  <section id="panel-checkpoints" class="panel" hidden></section>
+  <section id="panel-credentials" class="panel" hidden></section>
+</main>
+
+<script src="verify.js"></script>
+<script src="explorer.js"></script>
+</body>
+</html>

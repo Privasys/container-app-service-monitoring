@@ -1,0 +1,237 @@
+{
+    "config_api": {
+        "method": "POST",
+        "path": "/configure"
+    },
+    "configure": {
+        "readiness_path": "/readiness",
+        "status_path": "/api/v1/status"
+    },
+    "tools": [
+        {
+            "name": "configure",
+            "role": "config",
+            "description": "Bring the monitor up: the tenant it watches for, the service model it starts from, and where alerts are delivered. The runtime keeps every other endpoint at HTTP 503 until this succeeds, and re-arms the gate on each restart; the monitor lifts it again itself from the configuration on its sealed volume, so a redeploy is not a reconfiguration.",
+            "endpoint": "/configure",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tenant": {
+                        "type": "string",
+                        "description": "The customer this monitor watches for.",
+                        "x-privasys": { "label": "Tenant" }
+                    },
+                    "pack_ref": {
+                        "type": "string",
+                        "description": "The name of a service model baked into the image. Use 'example-saas' for the reference model shipped with this build.",
+                        "x-privasys": { "label": "Service model" }
+                    },
+                    "callback_url": {
+                        "type": "string",
+                        "description": "Where alerts are delivered. Every notification is signed, and carries the ledger root and version at which the change it reports was recorded.",
+                        "x-privasys": { "label": "Alert callback" }
+                    },
+                    "callback_hosts": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Extra hosts this instance may contact outbound. The monitors' own targets are added automatically; anything else is refused and recorded."
+                    },
+                    "raw_retention_days": {
+                        "type": "integer",
+                        "description": "How long individual readings are kept before the folded intervals stand alone. Default 90.",
+                        "minimum": 1,
+                        "maximum": 3650
+                    },
+                    "maintenance_lead_time": {
+                        "type": "integer",
+                        "description": "How much notice, in seconds, a planned maintenance window needs to leave the agreed service time. Default 86400. A window declared with less is recorded, shown, and left in the availability denominator."
+                    }
+                },
+                "required": ["tenant"]
+            }
+        },
+        {
+            "name": "put_secret",
+            "role": "action",
+            "description": "Deliver a credential the journeys use, bound to the hosts it may be sent to. The value is sealed to this build's measurement, never returned by any endpoint, and refused for a request to any other host. This is what lets a monitor log in as a real least-privilege account instead of probing the login page.",
+            "endpoint": "/tools/put_secret",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name journeys reference as {{ secrets.<name> }}.",
+                        "x-privasys": { "label": "Name" }
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "The credential itself.",
+                        "x-privasys": { "secret": true, "label": "Value" }
+                    },
+                    "hosts": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "The hosts this credential may be sent to. A leading dot binds a whole subtree, e.g. '.example.com'."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "What this credential is, for whoever reads the record later."
+                    }
+                },
+                "required": ["name", "value", "hosts"]
+            }
+        },
+        {
+            "name": "upsert_monitor",
+            "role": "action",
+            "description": "Create a journey or publish a new version of one. A monitor is never edited in place: the previous definition stays readable, and every reading records the version it was taken under, so a report can name what was being measured at the time.",
+            "endpoint": "/tools/upsert_monitor",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Omit to create a new monitor." },
+                    "component_id": {
+                        "type": "string",
+                        "description": "The component this journey measures.",
+                        "x-privasys": { "source": { "tool": "services", "select": "services" } }
+                    },
+                    "name": { "type": "string" },
+                    "interval_seconds": { "type": "integer", "minimum": 10, "default": 60 },
+                    "timeout_seconds": { "type": "integer", "minimum": 1, "default": 30 },
+                    "failure_threshold": { "type": "integer", "minimum": 1, "default": 2 },
+                    "recovery_threshold": { "type": "integer", "minimum": 1, "default": 2 },
+                    "latency_budget_ms": { "type": "integer", "description": "A journey that completes but takes longer than this is degraded rather than up." },
+                    "steps": {
+                        "type": "array",
+                        "description": "The ordered steps: http requests, assertions, extractions, and cleanup steps that run even after a failure.",
+                        "items": { "type": "object" }
+                    },
+                    "message": { "type": "string", "description": "Why this change is being made. Required, at most 72 characters." }
+                },
+                "required": ["name", "component_id", "steps", "message"]
+            }
+        },
+        {
+            "name": "run_check",
+            "role": "action",
+            "description": "Run a journey immediately. The reading is recorded and visible, and marked manual so it never enters the availability series: pressing this during an incident cannot change what the month's report says.",
+            "endpoint": "/tools/run_check",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "monitor": {
+                        "type": "string",
+                        "description": "The monitor to run.",
+                        "x-privasys": { "source": { "tool": "monitors", "select": "monitors" } }
+                    }
+                },
+                "required": ["monitor"]
+            }
+        },
+        {
+            "name": "schedule_maintenance",
+            "role": "action",
+            "description": "Declare a maintenance window. Whether it leaves the agreed service time is decided here, from its class and how much notice it carries, and both the decision and the notice are recorded. A window declared after the outage it covers appears in the report as exactly that.",
+            "endpoint": "/tools/schedule_maintenance",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "service_id": { "type": "string" },
+                    "title": { "type": "string" },
+                    "description": { "type": "string" },
+                    "class": {
+                        "type": "string",
+                        "enum": ["planned_maintenance", "third_party", "force_majeure", "customer_caused", "monitoring_fault"],
+                        "default": "planned_maintenance"
+                    },
+                    "components": { "type": "array", "items": { "type": "string" } },
+                    "starts_at": { "type": "integer", "description": "Unix seconds." },
+                    "ends_at": { "type": "integer", "description": "Unix seconds." },
+                    "message": { "type": "string", "description": "Why this window is being declared." }
+                },
+                "required": ["service_id", "title", "starts_at", "ends_at", "message"]
+            }
+        },
+        {
+            "name": "incident_update",
+            "role": "action",
+            "description": "Add an entry to an incident's timeline and move its status. Each update is a signed transaction, so the narrative a customer reads is the same object the report cites and cannot be quietly improved later.",
+            "endpoint": "/tools/incident_update",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "incident": { "type": "string" },
+                    "status": {
+                        "type": "string",
+                        "enum": ["investigating", "identified", "monitoring", "resolved"]
+                    },
+                    "body": { "type": "string", "description": "What is known now." },
+                    "message": { "type": "string", "description": "Commit summary, at most 72 characters." }
+                },
+                "required": ["incident", "status", "body", "message"]
+            }
+        },
+        {
+            "name": "report",
+            "role": "action",
+            "description": "Issue a signed SLA report for a period: availability against agreed service time, the user-weighted figure beside it, monitoring coverage, every exclusion with the notice it carried, and each objective met, breached or indeterminate. The document carries the readings it was computed from, so the shipped verifier can recompute the arithmetic offline rather than take the number.",
+            "endpoint": "/tools/report",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "service_id": { "type": "string" },
+                    "window": {
+                        "type": "string",
+                        "enum": ["calendar_month", "calendar_week", "calendar_quarter", "rolling_30d"],
+                        "default": "calendar_month"
+                    },
+                    "previous": { "type": "boolean", "description": "Report the period before this one." },
+                    "include_proofs": { "type": "boolean", "description": "Attach inclusion proofs for the intervals inside declared outages." }
+                }
+            }
+        },
+        {
+            "name": "checkpoint",
+            "role": "action",
+            "description": "Sign the current state as a root checkpoint. Customers hold these outside the monitor; they are what makes a rolled-back record detectable from the outside, and a receipt of one bounds the enclave's clock against the customer's own.",
+            "endpoint": "/tools/checkpoint",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "reason": { "type": "string", "description": "Why this checkpoint is being issued." }
+                }
+            }
+        },
+        {
+            "name": "status",
+            "role": "status",
+            "description": "The monitor's position: lifetime state, ledger root and version, the services it watches with their current indicator, the last checkpoint, and the outbound allowlist this instance is confined to.",
+            "endpoint": "/tools/status",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "monitors",
+            "role": "status",
+            "description": "The journeys and their current state: what is up, what is down, and since when.",
+            "endpoint": "/tools/monitors",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "services",
+            "role": "status",
+            "description": "The services and components this monitor watches.",
+            "endpoint": "/tools/services",
+            "inputSchema": { "type": "object", "properties": {} }
+        }
+    ],
+    "store": {
+        "tagline": "Availability monitoring that can be given a real account, and reports that can be checked rather than believed.",
+        "category": "Developer Tools",
+        "keywords": "monitoring, uptime, availability, sla, status page, synthetic monitoring, incident management, itsm, attestation, ra-tls, confidential computing, tdx, verifiable reports",
+        "website_url": "https://privasys.org",
+        "support_email": "contact@privasys.org",
+        "privacy_url": "https://privasys.org/legal/privacy/",
+        "tos_url": "https://privasys.org/legal/terms/",
+        "description": "Service availability monitoring that runs inside a confidential VM, so it can be trusted with a working account on the service it watches, and so the record it keeps can be checked rather than believed.\n\nDEEP CHECKS, NOT PINGS\nA monitor here is a journey: log in with a real least-privilege account, do the thing the service level agreement is actually about, assert that the answer is right rather than merely present, and clean up afterwards. That is only safe because of where it runs. Credentials arrive over an attested channel, are sealed to the measurement of this build, and are bound at creation to the hosts they may be sent to, so repointing a monitor cannot exfiltrate the account it was given.\n\nAN AVAILABILITY RECORD NEITHER SIDE CAN REWRITE\nEvery reading, incident, maintenance window and report is a signed transaction in an append-only ledger whose single root attests the whole record. Signed checkpoints are delivered to the customer, so a record restored from an older copy cannot be passed off as the current one, and an auditor can fold the published roots between two anchors with no key at all.\n\nREPORTS THAT RECOMPUTE\nAn SLA report carries the folded readings its arithmetic used. The verifier shipped in the same image recomputes availability, the user-weighted figure, coverage and every objective from that evidence, and refuses a report whose evidence shows downtime the report did not declare. A signed wrong answer fails.\n\nHONEST ABOUT EXCLUSIONS AND ABOUT ITSELF\nA maintenance window records when it was declared, so one entered after the outage it covers reads as exactly that. Monitoring coverage is reported beside availability, and an objective evaluated on too little evidence is reported as indeterminate rather than met: a monitor that was down cannot certify uptime.\n\nA STATUS PAGE YOU CAN CHECK\nThe public page is the familiar shape, with ninety days of uptime bars, incident timelines and scheduled maintenance, plus a JSON surface existing dashboards already parse. It is served from inside the measured image, it names the build that drew it, and any figure on it can be followed to an inclusion proof that the reader's own browser checks.\n\nWHO IT IS FOR\nAnyone who has to commit to a service level and be able to show what happened: suppliers writing an agreement they will be held to, customers who would rather not take a supplier's dashboard on trust, and regulated operations where the availability record is evidence."
+    }
+}

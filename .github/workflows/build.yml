@@ -1,0 +1,399 @@
+# Copyright (c) 2026 Privasys.
+# Licensed under the GNU Affero General Public License v3.0.
+#
+# Test and smoke-test on every push and pull request; publish + release
+# ONLY on a `v*` git tag.
+#
+# Platform contract (management-service):
+#   - A deployable "version" == a TAG on the GHCR image (ListImageTags
+#     reads registry tags). We publish exactly ONE semver tag per git
+#     tag: no tag, no image.
+#   - Single-arch linux/amd64 with provenance/sbom off: an OCI
+#     attestation index would change the manifest digest the enclave
+#     pins at OID 1.3.6.1.4.1.65230.3.2.
+#   - Each release records that digest, so a deployer can pin the image
+#     by digest and a verifying client can check what it is talking to.
+
+name: Build and Release container-app-service-monitoring
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/privasys/container-app-service-monitoring
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would change these files:"; echo "$unformatted"; exit 1
+          fi
+
+  # The smoke job proves the properties the product claims, not that the
+  # binary starts. Every step below corresponds to a sentence in the
+  # README that would otherwise be marketing.
+  smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+
+      # Build-contract gate: the platform runs containers on the host
+      # network and injects a unique $PORT per app; the app MUST listen
+      # on it. An image that ignores $PORT can never ship.
+      - name: Build the image
+        run: docker build -t monitor-smoke .
+
+      - name: Start the service under test
+        run: |
+          go build -o /tmp/target ./tools/target
+          TARGET_PORT=18081 /tmp/target &
+          for _ in $(seq 1 20); do
+            curl -fs http://127.0.0.1:18081/health && break || sleep 1
+          done
+
+      - name: Watch it, break it, report on it, and check the report
+        run: |
+          set -euo pipefail
+          PORT=18080
+          AUTH='Authorization: Bearer dev:owner-1:Owner:monitoring:owner'
+
+          # Host networking is how the platform runs containers, so the
+          # smoke test uses it too rather than a friendlier arrangement.
+          docker run -d --name monitor-smoke --network host \
+            -e PORT=$PORT -e MONITOR_DATA_DIR=/data -e MONITOR_DEV_AUTH=1 \
+            -e MONITOR_SELF_CONFIGURE=1 -e MONITOR_PACK=example-saas \
+            -e MONITOR_ROLLUP_LAG=5s \
+            monitor-smoke
+
+          ok=0
+          for _ in $(seq 1 30); do
+            if curl -fs "http://127.0.0.1:$PORT/health" | grep -q '"status"'; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::The image did not serve /health on the injected PORT=$PORT."
+            docker logs monitor-smoke || true; exit 1
+          fi
+
+          # Deliver the credentials. This is the whole product: a real
+          # least-privilege account, sealed to this build, bound to the
+          # host it may be sent to.
+          curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/secrets" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"example_user","value":"monitor","hosts":["127.0.0.1"],"message":"Store the monitoring account"}' > /dev/null
+          curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/secrets" \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"example_password","value":"correct horse battery staple","hosts":["127.0.0.1"],"message":"Store the monitoring password"}' > /dev/null
+
+          # The value is never echoed back, not even to the caller who
+          # just supplied it.
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/secrets" > /tmp/secrets.json
+          if grep -q 'correct horse battery staple' /tmp/secrets.json; then
+            echo "::error::A credential value was returned by the API."; exit 1
+          fi
+
+          echo "--- the journey logs in and places an order ---"
+          START=$(date +%s)
+          sleep 35
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/samples?limit=5" > /tmp/samples.json
+          grep -q '"verdict":"up"' /tmp/samples.json
+          # A capture that carried the credential would be the one
+          # failure that must never happen.
+          if grep -q 'correct horse battery staple' /tmp/samples.json; then
+            echo "::error::A credential reached the record."; exit 1
+          fi
+          grep -q 'redacted:' /tmp/samples.json
+
+          echo "--- a credential refuses to travel to a second host ---"
+          CMP=$(curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/monitors" \
+            | jq -r '.monitors[0].monitor.component_id')
+          BAD=$(curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/monitors" \
+            -H 'Content-Type: application/json' -d "$(jq -nc --arg c "$CMP" '{
+              component_id: $c, name: "Exfiltration attempt", interval_seconds: 3600,
+              timeout_seconds: 10, message: "Add a journey that points a bound credential elsewhere",
+              steps: [{name: "send it elsewhere", kind: "http", method: "POST",
+                       url: "http://localhost:18081/login",
+                       headers: {"Content-Type": "application/json"},
+                       body: "{\"user\":\"{{ secrets.example_user }}\"}",
+                       expect_status: [200]}]}')" | jq -r '.monitor.id')
+          curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/monitors/$BAD/run" \
+            -H 'Content-Type: application/json' -d '{}' > /tmp/refused.json
+          grep -q '"error_class":"policy"' /tmp/refused.json
+          grep -q 'not bound to that host' /tmp/refused.json
+          # A refusal is a monitoring fault, never the customer's downtime.
+          grep -q '"verdict":"error"' /tmp/refused.json
+
+          echo "--- break the service and require an incident and an alert ---"
+          curl -fsS -X POST http://127.0.0.1:18081/admin/break \
+            -H 'Content-Type: application/json' -d '{"seconds":90}' > /dev/null
+          sleep 95
+          curl -fsS -X POST http://127.0.0.1:18081/admin/heal > /dev/null
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/incidents?limit=5" > /tmp/incidents.json
+          jq -e '.incidents[0].auto == true' /tmp/incidents.json > /dev/null
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/alerts" > /tmp/alerts.json
+          jq -e '.alerts[0].alert.event == "component.down"' /tmp/alerts.json > /dev/null
+          # The alert names the state the change was recorded at, so it
+          # is a pointer to evidence rather than a claim.
+          jq -e '.alerts[0].alert.ledger_version > 0' /tmp/alerts.json > /dev/null
+          sleep 70
+
+          echo "--- a maintenance window declared after the fact is not excluded ---"
+          SVC=$(curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/services" | jq -r '.services[0].id')
+          NOW=$(date +%s)
+          curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/maintenance" \
+            -H 'Content-Type: application/json' -d "$(jq -nc --arg s "$SVC" --argjson f $((NOW-300)) --argjson t $((NOW-60)) '{
+              service_id: $s, title: "Retrospective window", class: "planned_maintenance",
+              starts_at: $f, ends_at: $t,
+              message: "Declare a window over an outage that already happened"}')" > /tmp/window.json
+          jq -e '.excluded == false' /tmp/window.json > /dev/null
+          jq -e '.lead_time < 0' /tmp/window.json > /dev/null
+
+          echo "--- issue a report and recompute it offline ---"
+          END=$(date +%s)
+          curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/reports" \
+            -H 'Content-Type: application/json' \
+            -d "{\"from\":$START,\"to\":$END,\"include_proofs\":true}" > /tmp/report-response.json
+          jq '.report' /tmp/report-response.json > /tmp/report.json
+          jq -e '.downtime.seconds > 0' /tmp/report.json > /dev/null
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/checkpoints/key" > /tmp/key.json
+
+          docker cp /tmp/report.json monitor-smoke:/tmp/report.json
+          docker cp /tmp/key.json monitor-smoke:/tmp/key.json
+          docker exec monitor-smoke monitor-verify report /tmp/report.json --key /tmp/key.json
+
+          # A signed wrong answer has to fail. Both directions: a report
+          # edited to hide the outage, and evidence swapped for a
+          # friendlier set.
+          jq '.downtime.seconds = 0 | .outages = [] | .results.availability_ppm = 1000000' \
+            /tmp/report.json > /tmp/report-edited.json
+          docker cp /tmp/report-edited.json monitor-smoke:/tmp/report-edited.json
+          if docker exec monitor-smoke monitor-verify report /tmp/report-edited.json \
+               --key /tmp/key.json --quiet; then
+            echo "::error::A report edited to hide an outage verified."; exit 1
+          fi
+          jq '.evidence.buckets |= map(.down_count = 0 | .verdict = "up")' \
+            /tmp/report.json > /tmp/report-swapped.json
+          docker cp /tmp/report-swapped.json monitor-smoke:/tmp/report-swapped.json
+          if docker exec monitor-smoke monitor-verify report /tmp/report-swapped.json \
+               --key /tmp/key.json --quiet; then
+            echo "::error::A report with substituted evidence verified."; exit 1
+          fi
+
+          echo "--- an evidence bundle, and one that was edited ---"
+          MON=$(jq -r '.evidence.buckets[] | select(.width == 60) | .monitor_id' /tmp/report.json | head -1)
+          W=$(jq -r '.evidence.buckets[] | select(.width == 60) | .width' /tmp/report.json | head -1)
+          S=$(jq -r '.evidence.buckets[] | select(.width == 60) | .start' /tmp/report.json | head -1)
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/proofs/buckets/$MON/$W/$S" > /tmp/bundle.json
+          docker cp /tmp/bundle.json monitor-smoke:/tmp/bundle.json
+          docker exec monitor-smoke monitor-verify bundle /tmp/bundle.json --key /tmp/key.json
+          sed 's/"present":true/"present":false/' /tmp/bundle.json > /tmp/bundle-edited.json
+          docker cp /tmp/bundle-edited.json monitor-smoke:/tmp/bundle-edited.json
+          if docker exec monitor-smoke monitor-verify bundle /tmp/bundle-edited.json \
+               --key /tmp/key.json --quiet; then
+            echo "::error::An edited evidence bundle verified."; exit 1
+          fi
+
+          echo "--- the checkpoint chain and the lineage fold ---"
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/checkpoints?limit=100" > /tmp/chain.json
+          docker cp /tmp/chain.json monitor-smoke:/tmp/chain.json
+          docker exec monitor-smoke monitor-verify chain /tmp/chain.json --key /tmp/key.json
+          FROM=$(jq '[.checkpoints[].checkpoint.version] | min' /tmp/chain.json)
+          TO=$(jq '[.checkpoints[].checkpoint.version] | max' /tmp/chain.json)
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/audit/roots?from=$FROM&to=$TO" > /tmp/roots.json
+          jq -n --slurpfile c /tmp/chain.json --slurpfile r /tmp/roots.json --argjson f "$FROM" --argjson t "$TO" '{
+            from: ($c[0].checkpoints[] | select(.checkpoint.version == $f)),
+            to:   ($c[0].checkpoints[] | select(.checkpoint.version == $t)),
+            roots: $r[0].roots }' > /tmp/lineage.json
+          docker cp /tmp/lineage.json monitor-smoke:/tmp/lineage.json
+          docker exec monitor-smoke monitor-verify lineage /tmp/lineage.json --key /tmp/key.json
+          # A rewritten history must not fold to the anchored head.
+          jq '.roots[0].root = "0000000000000000000000000000000000000000000000000000000000000000"' \
+            /tmp/lineage.json > /tmp/lineage-bad.json
+          docker cp /tmp/lineage-bad.json monitor-smoke:/tmp/lineage-bad.json
+          if docker exec monitor-smoke monitor-verify lineage /tmp/lineage-bad.json \
+               --key /tmp/key.json --quiet; then
+            echo "::error::A substituted root folded to the anchored head."; exit 1
+          fi
+
+          echo "--- the public status surface answers without a token ---"
+          curl -fsS "http://127.0.0.1:$PORT/api/v1/public/status" > /tmp/status.json
+          jq -e '.components | length > 0' /tmp/status.json > /dev/null
+          jq -e '.attestation.root != ""' /tmp/status.json > /dev/null
+          curl -fsS "http://127.0.0.1:$PORT/api/v2/summary.json" | jq -e '.status.indicator' > /dev/null
+          curl -fsS "http://127.0.0.1:$PORT/.well-known/privasys-monitor.json" \
+            | jq -e '.signing_key.public_key != ""' > /dev/null
+          curl -fsS "http://127.0.0.1:$PORT/status" | grep -q '<title>'
+
+          echo "--- self-recovery: a restart is not a reconfiguration ---"
+          docker restart monitor-smoke > /dev/null
+          for _ in $(seq 1 30); do
+            if curl -fs "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'; then break; fi
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/events" > /tmp/events.json
+          # The gap the restart left is written down, because a monitor
+          # that was not running did not see a service that was up.
+          jq -e '[.events[] | select(.kind == "boot")] | length >= 2' /tmp/events.json > /dev/null
+
+          echo "--- container logs ---"; docker logs monitor-smoke | tail -20
+          docker rm -f monitor-smoke > /dev/null 2>&1 || true
+          echo "OK: watches a real service with a sealed credential, refuses to leak it,"
+          echo "    detects an outage, reports on it, and the report recomputes offline."
+
+      # The status page claims a reader can check a figure in the page.
+      # That is only true while its JavaScript agrees with the Go signer
+      # byte for byte, so the same bundle goes through both.
+      - name: The in-browser verifier agrees with the monitor
+        run: node tools/browser-verify.mjs /tmp/bundle.json /tmp/key.json
+
+  # The status page and the operator explorer, driven in real browsers
+  # against a real monitor.
+  e2e:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox
+
+      - name: Type-check
+        working-directory: e2e
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: e2e
+        run: npm test
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            e2e/test-results
+            e2e/playwright-report
+          retention-days: 7
+
+  build:
+    needs: [smoke, e2e]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # cut the GitHub Release
+      packages: write      # push to GHCR
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      # Embed privasys.json (the app manifest) as the org.privasys.manifest
+      # OCI label so the platform auto-detects the tools and the config
+      # gate. base64 survives the CSV label parser; the platform decodes it.
+      - name: Read privasys.json
+        id: manifest
+        run: echo "json=$(jq -c . privasys.json | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          build-args: VERSION=${{ steps.tag.outputs.tag }}
+          tags: ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+          labels: org.privasys.manifest=${{ steps.manifest.outputs.json }}
+
+      - name: Cut GitHub Release (Measurements)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          cat > notes.md <<EOF
+          ## Measurements
+
+          | Measurement | Value |
+          |-------------|-------|
+          | **Workload image digest** | \`${DIGEST}\` |
+          | **Attestation OID** | \`1.3.6.1.4.1.65230.3.2\` |
+          | **Pinned reference** | \`${IMAGE}@${DIGEST}\` |
+          | **Source commit** | \`${SHA}\` |
+
+          The workload image digest is the SHA-256 manifest digest of the published
+          container image. The enclave measures it into the RA-TLS leaf certificate
+          at OID **1.3.6.1.4.1.65230.3.2**, so a client verifies which build served
+          its request by inspecting the quote in the server certificate.
+
+          This build additionally publishes two extensions on the per-container leaf:
+          **1.3.6.1.4.1.65230.3.5.1**, SHA-256 over the public half of the key this
+          build signs its reports, checkpoints and alerts with, and
+          **1.3.6.1.4.1.65230.3.5.2**, the live ledger root. The first is what binds
+          the evidence to the measurement: a report is only as good as the knowledge
+          of which build held the key that signed it.
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --generate-notes --verify-tag
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## ${{ steps.tag.outputs.tag }} published"
+            echo
+            echo '```'
+            echo "${IMAGE}@${{ steps.build.outputs.digest }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

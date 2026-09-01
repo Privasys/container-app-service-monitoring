@@ -1,0 +1,111 @@
+/* Copyright (c) Privasys. Licensed under the AGPL-3.0. */
+
+:root {
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --ink: #16191f;
+  --muted: #63697a;
+  --line: #e3e6ec;
+  --ok: #1f9d55;
+  --warn: #d99215;
+  --bad: #d0342c;
+  --unknown: #c3c8d2;
+  --accent: #2f5bd0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101318;
+    --card: #171b22;
+    --ink: #e9ecf2;
+    --muted: #9aa2b4;
+    --line: #262c37;
+    --unknown: #333a47;
+    --accent: #7ba0ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.wrap { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+
+.masthead { padding: 40px 0 8px; }
+.masthead h1 { margin: 0 0 4px; font-size: 28px; letter-spacing: -0.01em; }
+
+.muted { color: var(--muted); }
+a { color: var(--accent); }
+
+.banner {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px 20px; margin: 20px 0 28px; font-size: 18px; font-weight: 600;
+}
+.banner .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--unknown); }
+.banner.none .dot { background: var(--ok); }
+.banner.minor .dot, .banner.maintenance .dot { background: var(--warn); }
+.banner.major .dot, .banner.critical .dot { background: var(--bad); }
+.banner #updated { margin-left: auto; font-size: 13px; font-weight: 400; }
+
+.cards { margin-bottom: 32px; }
+.cards h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+.component {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 10px;
+}
+.component-head { display: flex; align-items: baseline; gap: 12px; }
+.component-name { font-weight: 600; }
+.component-status { margin-left: auto; font-size: 14px; }
+.status-operational { color: var(--ok); }
+.status-degraded_performance, .status-under_maintenance { color: var(--warn); }
+.status-partial_outage, .status-major_outage { color: var(--bad); }
+
+.bars { display: flex; gap: 2px; margin: 12px 0 6px; height: 32px; }
+.bar { flex: 1; border-radius: 2px; background: var(--ok); min-width: 2px; cursor: pointer; }
+.bar.partial_outage { background: var(--warn); }
+.bar.major_outage { background: var(--bad); }
+.bar.unknown { background: var(--unknown); }
+.bar-legend { display: flex; font-size: 12px; color: var(--muted); }
+.bar-legend span:last-child { margin-left: auto; }
+.bar-legend .uptime { margin: 0 auto; }
+
+.incident, .window {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin-bottom: 10px;
+}
+.incident h3, .window h3 { margin: 0 0 4px; font-size: 17px; }
+.incident .meta, .window .meta { font-size: 13px; color: var(--muted); }
+.update { border-left: 2px solid var(--line); padding: 6px 0 6px 14px; margin-top: 12px; }
+.update .status { font-weight: 600; text-transform: capitalize; }
+
+/* A maintenance window carries the moment it was declared, because a
+   window entered after the outage it covers is a different fact from
+   one declared a week ahead, and the page says which. */
+.declared { font-size: 13px; }
+.declared.late { color: var(--bad); }
+
+.attestation dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14px; }
+.attestation dt { color: var(--muted); }
+.attestation dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+
+.verify { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; font-size: 14px; }
+.check { display: flex; gap: 10px; padding: 4px 0; }
+.check .mark { width: 18px; }
+.check.pass .mark { color: var(--ok); }
+.check.fail .mark { color: var(--bad); }
+.check.unknown .mark { color: var(--muted); }
+
+button {
+  font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+
+footer { padding: 24px 0 48px; font-size: 13px; }

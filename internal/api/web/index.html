@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service status</title>
+<link rel="stylesheet" href="status.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1 id="service-name">Service status</h1>
+    <p id="service-description" class="muted"></p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="banner" class="banner">
+    <span class="dot"></span>
+    <span id="headline">Loading</span>
+    <span id="updated" class="muted"></span>
+  </section>
+
+  <section id="incidents" class="cards" hidden>
+    <h2>Active incidents</h2>
+    <div id="incident-list"></div>
+  </section>
+
+  <section id="maintenance" class="cards" hidden>
+    <h2>Scheduled maintenance</h2>
+    <div id="maintenance-list"></div>
+  </section>
+
+  <section class="cards">
+    <h2>Components</h2>
+    <div id="components"></div>
+  </section>
+
+  <section id="history" class="cards" hidden>
+    <h2>Past incidents</h2>
+    <div id="history-list"></div>
+  </section>
+
+  <!--
+    The panel that makes this page different from every other status
+    page. It names the measurement of the build that produced the
+    figures above and the authenticated state they were read at, and it
+    lets a reader check one of those figures in their own browser
+    instead of taking it.
+  -->
+  <section class="cards attestation">
+    <h2>How to check this page</h2>
+    <p>
+      Every figure above is computed from readings held in an
+      append-only ledger, and each one can be proved. The proof is
+      checked here, in your browser: the inclusion proof is folded back
+      to the root by arithmetic over hashes, and the signature is
+      checked against a key fetched once from this service.
+    </p>
+    <dl id="attestation"></dl>
+    <div id="verify-result" class="verify" hidden></div>
+  </section>
+</main>
+
+<footer class="wrap muted">
+  <p>
+    Served from inside a confidential VM by
+    <a href="https://github.com/Privasys/container-app-service-monitoring">container-app-service-monitoring</a>,
+    open source under the AGPL-3.0 licence.
+    <a href="/history.atom">Atom feed</a>.
+    <a href="/api/v2/summary.json">JSON</a>.
+  </p>
+</footer>
+
+<script src="verify.js"></script>
+<script src="status.js"></script>
+</body>
+</html>

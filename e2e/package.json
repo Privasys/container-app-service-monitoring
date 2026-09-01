@@ -1,0 +1,16 @@
+{
+  "name": "container-app-service-monitoring-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "screenshots": "playwright test --project=screenshots"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
