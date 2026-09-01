@@ -102,14 +102,31 @@ func New(mon *core.Monitor, signer ed25519.PrivateKey, keyID string,
 	}
 }
 
+// concurrency bounds how many deliveries are in flight.
+//
+// One at a time would be simpler and wrong: the retry schedule runs to
+// a quarter of an hour, so a single unresponsive callback would hold
+// every later alert behind it, and the alerts most likely to be delayed
+// are the ones raised while something is already going badly.
+const concurrency = 8
+
 // Run processes the queue until the context is cancelled.
 func (s *Sender) Run(ctx context.Context) {
+	slots := make(chan struct{}, concurrency)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case j := <-s.queue:
-			s.deliver(ctx, j)
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func(j job) {
+				defer func() { <-slots }()
+				s.deliver(ctx, j)
+			}(j)
 		}
 	}
 }

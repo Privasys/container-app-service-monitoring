@@ -82,9 +82,10 @@ jobs:
 
           # Host networking is how the platform runs containers, so the
           # smoke test uses it too rather than a friendlier arrangement.
+          # Deliberately NOT self-configured: the configure call below is
+          # the path a deployer actually takes.
           docker run -d --name monitor-smoke --network host \
             -e PORT=$PORT -e MONITOR_DATA_DIR=/data -e MONITOR_DEV_AUTH=1 \
-            -e MONITOR_SELF_CONFIGURE=1 -e MONITOR_PACK=example-saas \
             -e MONITOR_ROLLUP_LAG=5s \
             monitor-smoke
 
@@ -97,6 +98,29 @@ jobs:
             echo "::error::The image did not serve /health on the injected PORT=$PORT."
             docker logs monitor-smoke || true; exit 1
           fi
+
+          # Unconfigured, the monitor serves its probes and refuses the
+          # rest. The platform's freeze gate does this at runtime level;
+          # the application agreeing with it is what keeps a half
+          # configured instance from reporting on anything.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" \
+            "http://127.0.0.1:$PORT/api/v1/status")
+          if [ "$code" != "503" ]; then
+            echo "::error::Before configuration the API answered $code, expected 503."; exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/readiness")
+          if [ "$code" != "503" ]; then
+            echo "::error::Before configuration readiness answered $code, expected 503."; exit 1
+          fi
+
+          echo "--- configure, which lifts the gate ---"
+          curl -fsS -X POST "http://127.0.0.1:$PORT/configure" \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant":"acme","pack_ref":"example-saas","callback_url":"http://127.0.0.1:18081/hooks"}' \
+            > /tmp/configured.json
+          jq -e '.monitors >= 2' /tmp/configured.json > /dev/null
+          jq -e '.secrets_expected | length >= 2' /tmp/configured.json > /dev/null
+          curl -fsS "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'
 
           # Deliver the credentials. This is the whole product: a real
           # least-privilege account, sealed to this build, bound to the
@@ -158,6 +182,18 @@ jobs:
           # The alert names the state the change was recorded at, so it
           # is a pointer to evidence rather than a claim.
           jq -e '.alerts[0].alert.ledger_version > 0' /tmp/alerts.json > /dev/null
+
+          echo "--- the alert was delivered, signed, and the attempt recorded ---"
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:18081/hooks/received > /tmp/deliveries.json
+            if jq -e '.deliveries | length > 0' /tmp/deliveries.json > /dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/checkpoints/key" > /tmp/key.json
+          node tools/verify-webhook.mjs /tmp/deliveries.json /tmp/key.json
+          # Every attempt is in the record, not only the successful one.
+          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/alerts" > /tmp/alerts.json
+          jq -e '[.alerts[].deliveries[]? | select(.delivered)] | length > 0' /tmp/alerts.json > /dev/null
           sleep 70
 
           echo "--- a maintenance window declared after the fact is not excluded ---"
@@ -178,7 +214,6 @@ jobs:
             -d "{\"from\":$START,\"to\":$END,\"include_proofs\":true}" > /tmp/report-response.json
           jq '.report' /tmp/report-response.json > /tmp/report.json
           jq -e '.downtime.seconds > 0' /tmp/report.json > /dev/null
-          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/checkpoints/key" > /tmp/key.json
 
           docker cp /tmp/report.json monitor-smoke:/tmp/report.json
           docker cp /tmp/key.json monitor-smoke:/tmp/key.json

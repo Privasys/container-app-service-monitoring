@@ -71,7 +71,7 @@ func (m *Monitor) RecordSamples(samples []model.Sample) (*model.Transaction, []A
 
 		message := fmt.Sprintf("Record %d readings", len(samples))
 		if len(samples) == 1 {
-			message = fmt.Sprintf("Record a reading of %s", clip(monitorName(tx, samples[0].MonitorID), 40))
+			message = fmt.Sprintf("Record a reading of %s", summarise(monitorName(tx, samples[0].MonitorID), 40))
 		}
 		serviceID := samples[0].ServiceID
 		tr, err = m.commit(tx, model.Envelope{

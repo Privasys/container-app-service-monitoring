@@ -133,6 +133,11 @@ The body carries `ledger_root` and `ledger_version`, so an alert is a
 pointer to evidence rather than a claim: ask the monitor for that
 version and you are handed the readings that caused it.
 
+[`tools/verify-webhook.mjs`](../tools/verify-webhook.mjs) is a worked
+example of the check, and is what CI runs against a real delivery. Verify
+the bytes that arrived: the signature covers them exactly, so
+re-serialising the body before checking makes the check meaningless.
+
 Delivery is retried with a widening gap and then given up on. Every
 attempt is recorded, so "you never told us" and "you told us six hours
 late" both have answers.

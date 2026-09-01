@@ -422,3 +422,14 @@ func splitCSV(s string) []string {
 	}
 	return out
 }
+
+// summarise renders a name into a commit summary line.
+//
+// The envelope refuses a summary that ends with a full stop, which is
+// the right rule for a message somebody wrote and the wrong reason to
+// reject a reading. A component called "API." would otherwise make its
+// own transactions unwritable, so generated summaries are trimmed here
+// rather than defended against everywhere they are built.
+func summarise(s string, n int) string {
+	return strings.TrimRight(clip(strings.TrimSpace(s), n), ". ")
+}

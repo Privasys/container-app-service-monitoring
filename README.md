@@ -207,6 +207,10 @@ X-Privasys-Event: component.down
  "ledger_root":"000124ce…","ledger_version":67}
 ```
 
+A worked example of the receiving side, which is also what CI runs
+against a real delivery, is in
+[`tools/verify-webhook.mjs`](tools/verify-webhook.mjs).
+
 Every delivery attempt is recorded, not only the successful one, so "you
 never told us" and "you told us six hours late" both have answers.
 

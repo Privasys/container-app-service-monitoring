@@ -37,9 +37,6 @@ type ConfigureRequest struct {
 	PackRef string `json:"pack_ref,omitempty"`
 	// Pack is an inline service model, used instead of a reference.
 	Pack json.RawMessage `json:"pack,omitempty"`
-	// CommitmentKey is the ledger key, 64 hex characters. Empty means
-	// the monitor derives one from its sealed master secret.
-	CommitmentKey string `json:"commitment_key,omitempty"`
 	// CallbackURL is where alerts are delivered.
 	CallbackURL string `json:"callback_url,omitempty"`
 	// CallbackHosts extends the outbound allowlist beyond the callback
@@ -124,7 +121,7 @@ func (m *Monitor) Configure(p *auth.Principal, req ConfigureRequest, packDir str
 		_, err = m.commit(tx, model.Envelope{
 			Kind: model.KindConfigure, Tenant: tenant,
 			Author: p.Author(), Timestamp: m.Now(),
-			Message: "Configure the monitor for " + clip(tenant, 40),
+			Message: "Configure the monitor for " + summarise(tenant, 40),
 		}, []model.WriteOp{op})
 		return err
 	})
@@ -193,7 +190,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 		svc.ID = existing.ID
 		svc.ScheduleID = existing.ScheduleID
 	}
-	created, _, err := m.UpsertService(p, svc, "Seed the service from pack "+pk.Name)
+	created, _, err := m.UpsertService(p, svc, "Seed the service from pack "+summarise(pk.Name, 40))
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +205,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 			ID: created.ScheduleID, ServiceID: created.ID, Name: pk.Schedule.Name,
 			Timezone: timezone, Windows: pk.Schedule.Windows, Exceptions: pk.Schedule.Exceptions,
 		}
-		if _, _, err := m.UpsertSchedule(p, sched, "Set the agreed service time from pack "+pk.Name); err != nil {
+		if _, _, err := m.UpsertSchedule(p, sched, "Set the agreed service time from pack "+summarise(pk.Name, 40)); err != nil {
 			return nil, err
 		}
 	}
@@ -228,7 +225,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 			ID: byName[c.Name], ServiceID: created.ID, Name: c.Name, Description: c.Description,
 			UserWeight: c.UserWeight, Rollup: c.Rollup, Position: c.Position, Showcase: c.Showcase,
 		}
-		saved, _, err := m.UpsertComponent(p, component, "Add the "+c.Name+" component")
+		saved, _, err := m.UpsertComponent(p, component, "Add the "+summarise(c.Name, 40)+" component")
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +249,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 			FailureThreshold: ms.FailureThreshold, RecoveryThreshold: ms.RecoveryThreshold,
 			LatencyBudgetMs: ms.LatencyBudgetMs, Steps: ms.Steps,
 		}
-		if _, _, err := m.UpsertMonitor(p, mon, "Add the "+ms.Name+" journey"); err != nil {
+		if _, _, err := m.UpsertMonitor(p, mon, "Add the "+summarise(ms.Name, 40)+" journey"); err != nil {
 			return nil, err
 		}
 		out.Monitors++
@@ -272,7 +269,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 			Metric: os.Metric, TargetPPM: os.TargetPPM, Window: os.Window,
 			LatencyBudgetMs: os.LatencyBudgetMs, Credits: os.Credits,
 		}
-		if _, _, err := m.UpsertObjective(p, o, "Set the "+os.Name+" objective"); err != nil {
+		if _, _, err := m.UpsertObjective(p, o, "Set the "+summarise(os.Name, 40)+" objective"); err != nil {
 			return nil, err
 		}
 		out.Objectives++

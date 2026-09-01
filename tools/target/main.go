@@ -21,6 +21,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ type server struct {
 	password string
 	token    string
 	next     int
+	hooks    []delivery
 }
 
 func main() {
@@ -57,6 +59,8 @@ func main() {
 	mux.HandleFunc("POST /orders", s.createOrder)
 	mux.HandleFunc("GET /orders/{id}", s.getOrder)
 	mux.HandleFunc("DELETE /orders/{id}", s.deleteOrder)
+	mux.HandleFunc("POST /hooks", s.hook)
+	mux.HandleFunc("GET /hooks/received", s.received)
 	mux.HandleFunc("POST /admin/break", s.breakIt)
 	mux.HandleFunc("POST /admin/heal", s.heal)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
@@ -196,4 +200,41 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// The callback receiver. It exists so the end-to-end suite can prove
+// the whole notification path rather than assert about it: an alert is
+// signed, delivered, and verifiable by whoever receives it with nothing
+// but the key the monitor publishes.
+func (s *server) hook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "unreadable"})
+		return
+	}
+	headers := map[string]string{}
+	for k, v := range r.Header {
+		if len(v) > 0 {
+			headers[strings.ToLower(k)] = v[0]
+		}
+	}
+	s.mu.Lock()
+	s.hooks = append(s.hooks, delivery{Headers: headers, Body: string(body)})
+	s.mu.Unlock()
+	w.WriteHeader(204)
+}
+
+func (s *server) received(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	out := append([]delivery(nil), s.hooks...)
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"deliveries": out})
+}
+
+// delivery is one notification as it arrived, kept verbatim: the
+// signature covers the exact bytes, so re-serialising them would make
+// the check meaningless.
+type delivery struct {
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
 }

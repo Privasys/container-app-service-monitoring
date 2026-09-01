@@ -68,6 +68,11 @@ type Config struct {
 	// Pack is a service-model pack to seed a self-configured instance
 	// with.
 	Pack string
+	// PackDir is where the service models baked into the image live.
+	// The image puts them at /packs; a developer running from the
+	// repository has them in ./packs, and the fallback means the
+	// configure call behaves the same in both places.
+	PackDir string
 
 	// CheckpointInterval is how often a quiet monitor anchors its state.
 	CheckpointInterval time.Duration
@@ -92,6 +97,7 @@ func Load() (*Config, error) {
 		DevAuth:            truthy(os.Getenv("MONITOR_DEV_AUTH")),
 		SelfConfigure:      truthy(os.Getenv("MONITOR_SELF_CONFIGURE")),
 		Pack:               os.Getenv("MONITOR_PACK"),
+		PackDir:            env("MONITOR_PACK_DIR", ""),
 		CheckpointInterval: duration("MONITOR_CHECKPOINT_INTERVAL", 6*time.Hour),
 		RollupLag:          duration("MONITOR_ROLLUP_LAG", 90*time.Second),
 	}
@@ -103,6 +109,12 @@ func Load() (*Config, error) {
 
 	if c.Vantage == "" {
 		c.Vantage = c.Name
+	}
+	if c.PackDir == "" {
+		c.PackDir = "/packs"
+		if _, err := os.Stat(c.PackDir); err != nil {
+			c.PackDir = "packs"
+		}
 	}
 
 	// Development shortcuts are refused inside an enclave. The manager

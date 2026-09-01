@@ -54,9 +54,6 @@ import (
 // version is stamped at build time.
 var version = "dev"
 
-// packDir is where the service models baked into the image live.
-const packDir = "/packs"
-
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(log); err != nil {
@@ -133,7 +130,7 @@ func run(log *slog.Logger) error {
 
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
 	server.Version = version
-	server.PackDir = packDir
+	server.PackDir = cfg.PackDir
 	server.Manifest = readManifest(log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -146,7 +143,7 @@ func run(log *slog.Logger) error {
 				return nil, fmt.Errorf("configure: %w", err)
 			}
 		}
-		result, err := mon.Configure(auth.System(req.Tenant), req, packDir)
+		result, err := mon.Configure(auth.System(req.Tenant), req, cfg.PackDir)
 		if err != nil {
 			return nil, err
 		}
@@ -257,25 +254,17 @@ func humanDuration(seconds int64) string {
 // inside an enclave.
 func selfConfigure(mon *core.Monitor, cfg *config.Config) error {
 	req := core.ConfigureRequest{Tenant: "dev"}
-	dir := packDir
 	if cfg.Pack != "" {
-		if _, err := os.Stat(cfg.Pack); err == nil {
-			raw, err := os.ReadFile(cfg.Pack)
-			if err != nil {
-				return err
-			}
+		if raw, err := os.ReadFile(cfg.Pack); err == nil {
 			if _, err := pack.Parse(raw); err != nil {
 				return err
 			}
 			req.Pack = raw
 		} else {
 			req.PackRef = cfg.Pack
-			if _, err := os.Stat(packDir); err != nil {
-				dir = "packs"
-			}
 		}
 	}
-	_, err := mon.Configure(auth.System("dev"), req, dir)
+	_, err := mon.Configure(auth.System("dev"), req, cfg.PackDir)
 	return err
 }
 
