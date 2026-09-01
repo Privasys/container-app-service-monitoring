@@ -262,6 +262,10 @@ func (m *Monitor) UpsertMonitor(p *auth.Principal, mon model.Monitor, message st
 		if err != nil {
 			return err
 		}
+		viewport, err := jsonBytes(mon.Viewport)
+		if err != nil {
+			return err
+		}
 		definition, err := jsonBytes(mon)
 		if err != nil {
 			return err
@@ -275,6 +279,7 @@ func (m *Monitor) UpsertMonitor(p *auth.Principal, mon model.Monitor, message st
 					"interval_seconds": mon.IntervalSeconds, "timeout_seconds": mon.TimeoutSeconds,
 					"failure_threshold": mon.FailureThreshold, "recovery_threshold": mon.RecoveryThreshold,
 					"latency_budget_ms": mon.LatencyBudgetMs, "steps": steps, "retired": false,
+					"engine": mon.Engine, "viewport": viewport,
 					"created_at": mon.CreatedAt, "updated_at": mon.UpdatedAt,
 				},
 			},
@@ -528,7 +533,13 @@ func monitorFromRow(row store.Row) (*model.Monitor, error) {
 		IntervalSeconds: int(row.Int("interval_seconds")), TimeoutSeconds: int(row.Int("timeout_seconds")),
 		FailureThreshold: int(row.Int("failure_threshold")), RecoveryThreshold: int(row.Int("recovery_threshold")),
 		LatencyBudgetMs: int(row.Int("latency_budget_ms")),
+		Engine:          row.Str("engine"),
 		CreatedAt:       row.Int("created_at"), UpdatedAt: row.Int("updated_at"),
+	}
+	if raw := row.Bytes("viewport"); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &mon.Viewport); err != nil {
+			return nil, fmt.Errorf("core: monitor %s viewport: %w", mon.ID, err)
+		}
 	}
 	if raw := row.Bytes("steps"); len(raw) > 0 {
 		if err := json.Unmarshal(raw, &mon.Steps); err != nil {

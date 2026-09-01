@@ -153,10 +153,14 @@ type Monitor struct {
 	RecoveryThreshold int `json:"recovery_threshold"`
 	// LatencyBudgetMs, when set, raises `degraded` on a journey that
 	// completed but took longer than the budget.
-	LatencyBudgetMs int    `json:"latency_budget_ms"`
-	Steps           []Step `json:"steps"`
-	CreatedAt       int64  `json:"created_at"`
-	UpdatedAt       int64  `json:"updated_at"`
+	LatencyBudgetMs int `json:"latency_budget_ms"`
+	// Engine is "http" (the default) or "browser". A browser journey
+	// runs in a separate enclave whose measurement the owner pins.
+	Engine    string   `json:"engine,omitempty"`
+	Viewport  Viewport `json:"viewport,omitempty"`
+	Steps     []Step   `json:"steps"`
+	CreatedAt int64    `json:"created_at"`
+	UpdatedAt int64    `json:"updated_at"`
 }
 
 // Scheduling bounds.
@@ -202,6 +206,20 @@ type Step struct {
 
 	// sleep
 	SleepMs int `json:"sleep_ms,omitempty"`
+
+	// browser
+	Selector    string `json:"selector,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Key         string `json:"key,omitempty"`
+	Expression  string `json:"expression,omitempty"`
+	WaitVisible bool   `json:"wait_visible,omitempty"`
+	FullPage    bool   `json:"full_page,omitempty"`
+	// Capture returns the document's rendered text after this step, which
+	// is what assertions on the page read.
+	Capture bool `json:"capture,omitempty"`
+	// Screenshot captures the page and says what to compare it against.
+	Screenshot     *ScreenshotCheck `json:"screenshot,omitempty"`
+	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
 }
 
 // Assertion operators.
@@ -226,6 +244,10 @@ const (
 	SrcBody     = "body"
 	SrcJSON     = "json"
 	SrcVariable = "var"
+	// SrcOCR is text recognised in a screenshot, and SrcConsole is what
+	// the page logged for itself. Both exist only for browser journeys.
+	SrcOCR     = "ocr"
+	SrcConsole = "console"
 )
 
 // Assertion is one check over the response of the step it belongs to,
@@ -279,6 +301,12 @@ func (m *Monitor) Validate() error {
 	}
 	if len(m.Steps) > MaxSteps {
 		return fmt.Errorf("monitor: %d steps, the limit is %d", len(m.Steps), MaxSteps)
+	}
+	if m.Engine == EngineBrowser {
+		if err := m.validateBrowser(); err != nil {
+			return fmt.Errorf("monitor: %w", err)
+		}
+		return nil
 	}
 	seen := map[string]bool{}
 	requests := 0
@@ -356,7 +384,7 @@ func (s *Step) validate() error {
 
 func (a *Assertion) validate() error {
 	switch a.Source {
-	case SrcStatus, SrcLatency, SrcHeader, SrcBody, SrcJSON, SrcVariable:
+	case SrcStatus, SrcLatency, SrcHeader, SrcBody, SrcJSON, SrcVariable, SrcOCR, SrcConsole:
 	default:
 		return fmt.Errorf("unknown assertion source %q", a.Source)
 	}
@@ -575,6 +603,10 @@ type Sample struct {
 	// InMaintenance marks a sample taken during a declared window.
 	// Observation never stops; only the arithmetic changes.
 	InMaintenance bool `json:"in_maintenance"`
+	// Captures are the screenshots this reading produced, with what was
+	// measured about each. The images themselves live on the sealed
+	// volume, addressed by the digest recorded here.
+	Captures []Capture `json:"captures,omitempty"`
 }
 
 // StepResult is what one step did, with secrets already removed.

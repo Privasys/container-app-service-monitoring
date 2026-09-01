@@ -120,6 +120,12 @@ func (o *observation) value(a model.Assertion) (value string, present bool, fail
 	case model.SrcVariable:
 		v, ok := o.vars[a.Target]
 		return v, ok, ""
+	case model.SrcOCR:
+		v := o.vars[VarOCRText]
+		return v, v != "", ""
+	case model.SrcConsole:
+		v := o.vars[VarConsole]
+		return v, true, ""
 	case model.SrcJSON:
 		doc, ok := o.json()
 		if !ok {
@@ -161,6 +167,10 @@ func subject(a model.Assertion) string {
 		return a.Target + " in the response"
 	case model.SrcVariable:
 		return "the " + a.Target + " variable"
+	case model.SrcOCR:
+		return "the text recognised in the screenshot"
+	case model.SrcConsole:
+		return "the page's console output"
 	}
 	return a.Source
 }

@@ -107,6 +107,7 @@ func run(log *slog.Logger) error {
 
 	mon := core.New(st, material, vault, egress, core.Options{
 		Name: cfg.Name, Vantage: cfg.Vantage, ImageDigest: cfg.ImageDigest,
+		DataDir:            cfg.DataDir,
 		CheckpointInterval: cfg.CheckpointInterval, CommitmentSource: source,
 	})
 

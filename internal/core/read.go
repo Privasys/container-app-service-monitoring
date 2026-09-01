@@ -403,5 +403,8 @@ func sampleFromRow(row store.Row) model.Sample {
 	if raw := row.Bytes("steps"); len(raw) > 0 {
 		_ = jsonUnmarshal(raw, &s.Steps)
 	}
+	if raw := row.Bytes("captures"); len(raw) > 0 {
+		_ = jsonUnmarshal(raw, &s.Captures)
+	}
 	return s
 }

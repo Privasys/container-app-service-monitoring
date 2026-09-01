@@ -36,6 +36,14 @@ assertions held. Values extracted from one step are templated into the
 next, and a step that fails says which assertion failed and what the
 service actually returned.
 
+**And in a real browser, when the API is not the point.** A journey can
+run as a page instead of a request: click, fill, wait, read what the
+page then says, and photograph it. That runs in a separate enclave, the
+attested renderer, whose measurement the owner pins before a credential
+is handed to it. A screenshot is judged by arithmetic, never by a model:
+did anything render at all, and does it still look like the baseline
+somebody approved. See [docs/packs.md](docs/packs.md#browser-journeys).
+
 **A credential that cannot travel.** A credential is bound at creation
 to a host or a subtree. The engine refuses to interpolate it into a
 request to anywhere else, refuses to put it in a URL at all, and the
@@ -234,6 +242,15 @@ itself is the thing this one exists to replace.
 - **The monitor observes what its journeys exercise.** An agreement over
   functionality nobody scripted is not measured by this, or by anything
   else.
+- **A screenshot cannot be redacted.** Capture is opt-in per step, so a
+  journey need not photograph the page it has just typed a credential
+  into, and password fields are masked by the browser. A token the page
+  displays would be in the picture.
+- **No model looks at a screenshot, deliberately.** A model's judgement
+  does not recompute, and an availability figure resting on one could
+  not be checked. The visual checks are arithmetic over pixels; a model
+  belongs on the other side of that line, explaining a difference to a
+  person.
 - Not FIPS-certified, and not independently audited.
 
 ## Repository layout
@@ -242,7 +259,8 @@ itself is the thing this one exists to replace.
 | --- | --- |
 | [`cmd/monitor`](cmd/monitor) | The service. |
 | [`cmd/monitor-verify`](cmd/monitor-verify) | The offline verifier, shipped in the same image. |
-| [`internal/journey`](internal/journey) | Step execution, templating, assertions, egress. |
+| [`internal/journey`](internal/journey) | Step execution, templating, assertions, egress, and the attested browser leg. |
+| [`internal/visual`](internal/visual) | What a screenshot means, as arithmetic: blank detection and a perceptual hash against an approved baseline. |
 | [`internal/secrets`](internal/secrets) | The sealed credential store and the redactor. |
 | [`internal/availability`](internal/availability) | The arithmetic, as a pure package. |
 | [`internal/core`](internal/core) | Transactions, detection, incidents, reports, anchors. |

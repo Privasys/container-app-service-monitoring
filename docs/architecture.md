@@ -156,8 +156,46 @@ republished at every boot and after every configure.
   the vantage it came from) and not built. One instance cannot
   distinguish a failure of the watched service from a failure of the
   path to it, and this build says so rather than implying otherwise.
-- **Browser journeys.** HTTP only for now. The attested headless browser
-  is a separate app, reachable over the platform's attested dependency
-  mechanism, and that is the natural way to add them.
 - **A wire protocol into the SQL layer.** The application is the policy
   boundary; a listener would put one somewhere else.
+
+## The browser leg
+
+A monitor with `engine: browser` does not drive a page itself. It sends
+the journey to
+[container-app-browser](https://github.com/Privasys/container-app-browser),
+a renderer in its own enclave with its own measurement, no vault and no
+volume, and gets back what the page did: per-step outcomes, the
+document's rendered text, screenshots where the journey asked for them,
+console errors and the subresources that failed to load.
+
+The split is not tidiness. A journey renders whatever the watched
+service returns, which on a bad day is whatever an attacker put there,
+and Chromium is a large attack surface to put beside a credential vault
+and an availability record. Keeping it in a separate enclave means a
+compromised page has nothing to find.
+
+What crosses the gap is one request carrying resolved values and one
+response carrying observations. Before that request is sent, the
+renderer's certificate is checked for the workload image digest the
+owner pinned at OID `1.3.6.1.4.1.65230.3.2`, so the question "which
+build am I handing this credential to" is answered by a hardware quote
+rather than by a hostname. The renderer, for its part, requires a shared
+token: attestation says which build is on one end, the token says which
+caller is on the other.
+
+This is deterministic attestation. The quote binds a certificate that is
+renewed daily, so what it establishes is that the key was generated
+inside a genuine enclave running that measurement within the renewal
+window. Challenge-response freshness needs a nonce in the ClientHello
+and a TLS stack that carries one; that is a later upgrade, and the docs
+say so rather than implying more.
+
+**The judging stays here.** The renderer reports; this service decides.
+Every visual judgement is arithmetic over the returned image: how much
+of it is not background, and how many bits of a perceptual hash differ
+from an approved baseline. Both are integers, both are re-derivable by
+anyone holding the image, and neither needs the renderer to be trusted
+about anything except what it saw. That is what keeps a report
+recomputable, and it is why no model is asked whether a page looks
+right.

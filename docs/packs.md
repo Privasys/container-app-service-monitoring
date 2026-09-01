@@ -207,3 +207,142 @@ scope it.
 
 **Clean up.** A monitor running every thirty seconds for a year is a
 million orders if nothing deletes them.
+
+## Browser journeys
+
+Some services are only exercised the way a customer exercises them: a
+form that runs on submit, a dashboard that assembles itself after the
+document loads, a checkout that is three scripts and a redirect. An HTTP
+journey proves the API answered. A browser journey proves the page
+worked.
+
+It costs more, so it is a choice rather than the default, and it runs
+somewhere else: the attested renderer
+([container-app-browser](https://github.com/Privasys/container-app-browser)),
+in its own enclave, with no vault and no volume. A journey renders
+whatever the watched service returns, which on a bad day is whatever an
+attacker put there, and the process holding the credentials and the
+availability record should not be the process parsing it.
+
+Point the monitor at one at configure time:
+
+```bash
+privasys apps configure <app-id> \
+  --set renderer_url=https://browser.apps.privasys.org \
+  --set renderer_token="$(head -c 32 /dev/urandom | base64)" \
+  --set renderer_digest=sha256:…
+```
+
+The digest is what makes it safe. The credential is handed over only
+after the renderer's certificate has been checked against it, so which
+build receives it is answered by a hardware quote rather than by a
+hostname. Without a renderer configured, a browser journey is refused
+rather than quietly downgraded to fetching the HTML.
+
+```jsonc
+{
+  "name": "Place an order in the browser",
+  "component": "checkout",
+  "engine": "browser",
+  "interval_seconds": 300,
+  "timeout_seconds": 90,
+  "viewport": { "width": 1280, "height": 800 },
+  "steps": [
+    { "name": "open",     "kind": "goto",  "url": "https://app.example.com/login" },
+    { "name": "wait",     "kind": "wait",  "selector": "#email", "wait_visible": true },
+    { "name": "email",    "kind": "fill",  "selector": "#email",    "value": "{{ secrets.example_user }}" },
+    { "name": "password", "kind": "fill",  "selector": "#password", "value": "{{ secrets.example_password }}" },
+    { "name": "sign in",  "kind": "click", "selector": "button[type=submit]" },
+    { "name": "order",    "kind": "click", "selector": "#place-order" },
+    {
+      "name": "read it", "kind": "read", "capture": true,
+      "assertions": [
+        { "source": "body",    "op": "contains", "value": "Total: 42.00 GBP" },
+        { "source": "console", "op": "absent",
+          "message": "the page reported an error to its own console" }
+      ]
+    },
+    {
+      "name": "photograph it", "kind": "screenshot",
+      "screenshot": {
+        "min_ink_ppm": 5000,
+        "max_distance": 8,
+        "store": "on_fault",
+        "masks": [ { "x": 0, "y": 0, "w": 1280, "h": 60 } ]
+      }
+    }
+  ]
+}
+```
+
+Step kinds are `goto`, `click`, `fill`, `press`, `wait`, `sleep`, `read`,
+`screenshot` and `eval`. Credentials go into `fill` values, and the same
+rule as everywhere else holds: never into a URL, and never into a
+comparison, because a failure message ends up in an incident timeline a
+customer reads. The host binding still applies, resolved against
+whatever the last navigation set, so a journey that navigates elsewhere
+and then types a password is refused at the fill.
+
+### What a screenshot is checked against
+
+Two tests, both arithmetic over pixels, and both re-derivable by anyone
+holding the image.
+
+**`min_ink_ppm`** is how much of the picture must not be the background
+colour. It is the check that catches a white screen of death behind an
+HTTP 200, a stylesheet that failed to load, or a page that rendered a
+spinner and gave up, and it is worth more than every cleverer check
+after it. The default floor is 5000 parts per million, which is well
+under a page of ordinary text and well over an empty one.
+
+**`max_distance`** compares a 64-bit perceptual hash against a baseline
+somebody approved. Anti-aliasing and a changed number move a couple of
+bits; a redesign, a consent wall or a blank page move dozens. Mask the
+regions that legitimately change (a clock, a carousel, a "last updated"
+line) or the baseline fails every minute and teaches everyone to ignore
+it.
+
+`store` decides whether the image is kept on the sealed volume:
+`on_fault` (the default) keeps it when something went wrong or the page
+changed, `always` keeps every one, `never` keeps none. The digest, the
+hash and the ink measurement go into the record either way, so a reading
+always says what was seen even when the picture is gone.
+
+### Approving a baseline
+
+```bash
+privasys apps action <app-id> approve_baseline \
+  --arg monitor=<monitor-id> --arg step="photograph it" \
+  --arg message="Adopt the new checkout layout"
+```
+
+That publishes a new monitor version, so the baseline carries an author,
+a timestamp and a reason. Moving the bar after a failure is a
+transaction in the log sitting next to the failure it excuses, which is
+the property that makes a visual check worth having at all.
+
+### Text a page draws rather than writes
+
+Set `"viewport": { "ocr": true }` and the renderer also recognises text
+in each screenshot, available to assertions as the `ocr` source. It
+costs about a tenth of a second and is only worth it for a canvas, a
+chart, or an error baked into an image. Everywhere else the document's
+own text is exact, free, and available as the `body` source.
+
+The recogniser is a fixed version inside the renderer's measured image,
+so the same screenshot yields the same text and the result can be
+re-derived by anyone holding that image.
+
+### Why no model looks at the screenshot
+
+It would be the obvious next step, and it is deliberately not taken. A
+report's whole claim is that its numbers recompute from the evidence it
+carries. A model's judgement does not recompute: the same picture and
+the same prompt need not give the same answer, and bitwise-reproducible
+inference costs an order of magnitude in throughput. An availability
+figure resting on one would be a figure nobody can check, which is the
+thing this product exists to replace.
+
+A model is useful on the other side of that line: explaining to a person
+why two pictures differ, or triaging a change nobody expected. That is
+worth building, and it is worth keeping out of the arithmetic.

@@ -40,6 +40,9 @@ type Options struct {
 	Tenant string
 	// ImageDigest is the measurement of this build.
 	ImageDigest string
+	// DataDir is the sealed volume, where screenshots are kept beside the
+	// record that refers to them.
+	DataDir string
 	// CheckpointInterval is how often a quiet monitor anchors itself.
 	CheckpointInterval time.Duration
 	// CommitmentSource records whether the ledger key was delivered or
@@ -92,7 +95,13 @@ type Config struct {
 	// MaintenanceLeadTime is the default notice a planned window needs
 	// to leave agreed service time.
 	MaintenanceLeadTime int64 `json:"maintenance_lead_time"`
-	ConfiguredAt        int64 `json:"configured_at"`
+	// Renderer is the attested browser for browser journeys. The token
+	// is held here because the configuration lives on the sealed volume;
+	// what the record shows is a fingerprint of it, never the value.
+	RendererURL    string `json:"renderer_url,omitempty"`
+	RendererToken  string `json:"renderer_token,omitempty"`
+	RendererDigest string `json:"renderer_digest,omitempty"`
+	ConfiguredAt   int64  `json:"configured_at"`
 }
 
 // Defaults for a configuration that did not say.

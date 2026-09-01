@@ -156,7 +156,8 @@ func (s *Scheduler) run(ctx context.Context, mon model.Monitor, now int64, inMai
 		Vantage: s.mon.Options().Vantage, StartedAt: now,
 		DurationMs: res.DurationMs, Verdict: res.Verdict,
 		FailedStep: res.FailedStep, ErrorClass: res.ErrorClass, Detail: res.Detail,
-		Steps: res.Steps, Manual: manual, InMaintenance: inMaintenance,
+		Steps: res.Steps, Captures: res.Captures,
+		Manual: manual, InMaintenance: inMaintenance,
 	}
 }
 

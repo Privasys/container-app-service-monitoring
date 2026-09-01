@@ -151,6 +151,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/samples", s.wrap(s.listSamples))
 	mux.HandleFunc("GET /api/v1/buckets", s.wrap(s.listBuckets))
+	mux.HandleFunc("GET /api/v1/captures", s.wrap(s.listCaptures))
+	mux.HandleFunc("GET /api/v1/screenshots/{digest}", s.wrap(s.getScreenshot))
+	mux.HandleFunc("POST /api/v1/monitors/{id}/baseline", s.wrap(s.approveBaseline))
 
 	mux.HandleFunc("GET /api/v1/incidents", s.wrap(s.listIncidents))
 	mux.HandleFunc("POST /api/v1/incidents", s.wrap(s.openIncident))
@@ -197,6 +200,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /tools/incident_update", s.wrap(s.toolIncidentUpdate))
 	mux.HandleFunc("POST /tools/report", s.wrap(s.generateReport))
 	mux.HandleFunc("POST /tools/checkpoint", s.wrap(s.issueCheckpoint))
+	mux.HandleFunc("POST /tools/approve_baseline", s.wrap(s.approveBaseline))
 
 	registerPages(mux, s)
 

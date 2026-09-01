@@ -19,21 +19,29 @@
                     "tenant": {
                         "type": "string",
                         "description": "The customer this monitor watches for.",
-                        "x-privasys": { "label": "Tenant" }
+                        "x-privasys": {
+                            "label": "Tenant"
+                        }
                     },
                     "pack_ref": {
                         "type": "string",
                         "description": "The name of a service model baked into the image. Use 'example-saas' for the reference model shipped with this build.",
-                        "x-privasys": { "label": "Service model" }
+                        "x-privasys": {
+                            "label": "Service model"
+                        }
                     },
                     "callback_url": {
                         "type": "string",
                         "description": "Where alerts are delivered. Every notification is signed, and carries the ledger root and version at which the change it reports was recorded.",
-                        "x-privasys": { "label": "Alert callback" }
+                        "x-privasys": {
+                            "label": "Alert callback"
+                        }
                     },
                     "callback_hosts": {
                         "type": "array",
-                        "items": { "type": "string" },
+                        "items": {
+                            "type": "string"
+                        },
                         "description": "Extra hosts this instance may contact outbound. The monitors' own targets are added automatically; anything else is refused and recorded."
                     },
                     "raw_retention_days": {
@@ -45,9 +53,33 @@
                     "maintenance_lead_time": {
                         "type": "integer",
                         "description": "How much notice, in seconds, a planned maintenance window needs to leave the agreed service time. Default 86400. A window declared with less is recorded, shown, and left in the availability denominator."
+                    },
+                    "renderer_url": {
+                        "type": "string",
+                        "description": "The attested browser that browser journeys run on. Without one, a browser journey is refused rather than quietly downgraded to fetching the HTML.",
+                        "x-privasys": {
+                            "label": "Renderer URL"
+                        }
+                    },
+                    "renderer_token": {
+                        "type": "string",
+                        "description": "The secret that renderer asks for. It is held on the sealed volume; the record shows a fingerprint of it, never the value.",
+                        "x-privasys": {
+                            "secret": true,
+                            "label": "Renderer token"
+                        }
+                    },
+                    "renderer_digest": {
+                        "type": "string",
+                        "description": "The workload image digest the renderer must be running. A credential is handed over only after its certificate has been checked against this, so which build receives it is answered by a hardware quote rather than by a hostname.",
+                        "x-privasys": {
+                            "label": "Renderer measurement"
+                        }
                     }
                 },
-                "required": ["tenant"]
+                "required": [
+                    "tenant"
+                ]
             }
         },
         {
@@ -61,16 +93,23 @@
                     "name": {
                         "type": "string",
                         "description": "The name journeys reference as {{ secrets.<name> }}.",
-                        "x-privasys": { "label": "Name" }
+                        "x-privasys": {
+                            "label": "Name"
+                        }
                     },
                     "value": {
                         "type": "string",
                         "description": "The credential itself.",
-                        "x-privasys": { "secret": true, "label": "Value" }
+                        "x-privasys": {
+                            "secret": true,
+                            "label": "Value"
+                        }
                     },
                     "hosts": {
                         "type": "array",
-                        "items": { "type": "string" },
+                        "items": {
+                            "type": "string"
+                        },
                         "description": "The hosts this credential may be sent to. A leading dot binds a whole subtree, e.g. '.example.com'."
                     },
                     "description": {
@@ -78,7 +117,11 @@
                         "description": "What this credential is, for whoever reads the record later."
                     }
                 },
-                "required": ["name", "value", "hosts"]
+                "required": [
+                    "name",
+                    "value",
+                    "hosts"
+                ]
             }
         },
         {
@@ -89,26 +132,78 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "Omit to create a new monitor." },
+                    "id": {
+                        "type": "string",
+                        "description": "Omit to create a new monitor."
+                    },
                     "component_id": {
                         "type": "string",
                         "description": "The component this journey measures.",
-                        "x-privasys": { "source": { "tool": "services", "select": "services" } }
+                        "x-privasys": {
+                            "source": {
+                                "tool": "services",
+                                "select": "services"
+                            }
+                        }
                     },
-                    "name": { "type": "string" },
-                    "interval_seconds": { "type": "integer", "minimum": 10, "default": 60 },
-                    "timeout_seconds": { "type": "integer", "minimum": 1, "default": 30 },
-                    "failure_threshold": { "type": "integer", "minimum": 1, "default": 2 },
-                    "recovery_threshold": { "type": "integer", "minimum": 1, "default": 2 },
-                    "latency_budget_ms": { "type": "integer", "description": "A journey that completes but takes longer than this is degraded rather than up." },
+                    "name": {
+                        "type": "string"
+                    },
+                    "interval_seconds": {
+                        "type": "integer",
+                        "minimum": 10,
+                        "default": 60
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 30
+                    },
+                    "failure_threshold": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 2
+                    },
+                    "recovery_threshold": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 2
+                    },
+                    "latency_budget_ms": {
+                        "type": "integer",
+                        "description": "A journey that completes but takes longer than this is degraded rather than up."
+                    },
                     "steps": {
                         "type": "array",
                         "description": "The ordered steps: http requests, assertions, extractions, and cleanup steps that run even after a failure.",
-                        "items": { "type": "object" }
+                        "items": {
+                            "type": "object"
+                        }
                     },
-                    "message": { "type": "string", "description": "Why this change is being made. Required, at most 72 characters." }
+                    "message": {
+                        "type": "string",
+                        "description": "Why this change is being made. Required, at most 72 characters."
+                    },
+                    "engine": {
+                        "type": "string",
+                        "enum": [
+                            "http",
+                            "browser"
+                        ],
+                        "default": "http",
+                        "description": "How the journey runs. 'browser' drives a real page in the attested renderer, which costs more and is the only way to exercise a service the way a customer does."
+                    },
+                    "viewport": {
+                        "type": "object",
+                        "description": "The window a browser journey runs in, and part of what a screenshot means."
+                    }
                 },
-                "required": ["name", "component_id", "steps", "message"]
+                "required": [
+                    "name",
+                    "component_id",
+                    "steps",
+                    "message"
+                ]
             }
         },
         {
@@ -122,10 +217,51 @@
                     "monitor": {
                         "type": "string",
                         "description": "The monitor to run.",
-                        "x-privasys": { "source": { "tool": "monitors", "select": "monitors" } }
+                        "x-privasys": {
+                            "source": {
+                                "tool": "monitors",
+                                "select": "monitors"
+                            }
+                        }
                     }
                 },
-                "required": ["monitor"]
+                "required": [
+                    "monitor"
+                ]
+            }
+        },
+        {
+            "name": "approve_baseline",
+            "role": "action",
+            "description": "Adopt what a browser journey last saw as the approved appearance of a step. This publishes a new monitor version, so the baseline carries an author, a timestamp and a message: moving the bar after a failure is a transaction in the log, sitting next to the failure it excuses.",
+            "endpoint": "/tools/approve_baseline",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "monitor": {
+                        "type": "string",
+                        "description": "The monitor whose appearance is being approved.",
+                        "x-privasys": {
+                            "source": {
+                                "tool": "monitors",
+                                "select": "monitors"
+                            }
+                        }
+                    },
+                    "step": {
+                        "type": "string",
+                        "description": "The step that captures the screenshot."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Why the page is allowed to look different now. Required, at most 72 characters."
+                    }
+                },
+                "required": [
+                    "monitor",
+                    "step",
+                    "message"
+                ]
             }
         },
         {
@@ -136,20 +272,52 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "service_id": { "type": "string" },
-                    "title": { "type": "string" },
-                    "description": { "type": "string" },
+                    "service_id": {
+                        "type": "string"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
                     "class": {
                         "type": "string",
-                        "enum": ["planned_maintenance", "third_party", "force_majeure", "customer_caused", "monitoring_fault"],
+                        "enum": [
+                            "planned_maintenance",
+                            "third_party",
+                            "force_majeure",
+                            "customer_caused",
+                            "monitoring_fault"
+                        ],
                         "default": "planned_maintenance"
                     },
-                    "components": { "type": "array", "items": { "type": "string" } },
-                    "starts_at": { "type": "integer", "description": "Unix seconds." },
-                    "ends_at": { "type": "integer", "description": "Unix seconds." },
-                    "message": { "type": "string", "description": "Why this window is being declared." }
+                    "components": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "starts_at": {
+                        "type": "integer",
+                        "description": "Unix seconds."
+                    },
+                    "ends_at": {
+                        "type": "integer",
+                        "description": "Unix seconds."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Why this window is being declared."
+                    }
                 },
-                "required": ["service_id", "title", "starts_at", "ends_at", "message"]
+                "required": [
+                    "service_id",
+                    "title",
+                    "starts_at",
+                    "ends_at",
+                    "message"
+                ]
             }
         },
         {
@@ -160,15 +328,33 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "incident": { "type": "string" },
+                    "incident": {
+                        "type": "string"
+                    },
                     "status": {
                         "type": "string",
-                        "enum": ["investigating", "identified", "monitoring", "resolved"]
+                        "enum": [
+                            "investigating",
+                            "identified",
+                            "monitoring",
+                            "resolved"
+                        ]
                     },
-                    "body": { "type": "string", "description": "What is known now." },
-                    "message": { "type": "string", "description": "Commit summary, at most 72 characters." }
+                    "body": {
+                        "type": "string",
+                        "description": "What is known now."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Commit summary, at most 72 characters."
+                    }
                 },
-                "required": ["incident", "status", "body", "message"]
+                "required": [
+                    "incident",
+                    "status",
+                    "body",
+                    "message"
+                ]
             }
         },
         {
@@ -179,14 +365,27 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "service_id": { "type": "string" },
+                    "service_id": {
+                        "type": "string"
+                    },
                     "window": {
                         "type": "string",
-                        "enum": ["calendar_month", "calendar_week", "calendar_quarter", "rolling_30d"],
+                        "enum": [
+                            "calendar_month",
+                            "calendar_week",
+                            "calendar_quarter",
+                            "rolling_30d"
+                        ],
                         "default": "calendar_month"
                     },
-                    "previous": { "type": "boolean", "description": "Report the period before this one." },
-                    "include_proofs": { "type": "boolean", "description": "Attach inclusion proofs for the intervals inside declared outages." }
+                    "previous": {
+                        "type": "boolean",
+                        "description": "Report the period before this one."
+                    },
+                    "include_proofs": {
+                        "type": "boolean",
+                        "description": "Attach inclusion proofs for the intervals inside declared outages."
+                    }
                 }
             }
         },
@@ -198,7 +397,10 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "reason": { "type": "string", "description": "Why this checkpoint is being issued." }
+                    "reason": {
+                        "type": "string",
+                        "description": "Why this checkpoint is being issued."
+                    }
                 }
             }
         },
@@ -207,21 +409,30 @@
             "role": "status",
             "description": "The monitor's position: lifetime state, ledger root and version, the services it watches with their current indicator, the last checkpoint, and the outbound allowlist this instance is confined to.",
             "endpoint": "/tools/status",
-            "inputSchema": { "type": "object", "properties": {} }
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         },
         {
             "name": "monitors",
             "role": "status",
             "description": "The journeys and their current state: what is up, what is down, and since when.",
             "endpoint": "/tools/monitors",
-            "inputSchema": { "type": "object", "properties": {} }
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         },
         {
             "name": "services",
             "role": "status",
             "description": "The services and components this monitor watches.",
             "endpoint": "/tools/services",
-            "inputSchema": { "type": "object", "properties": {} }
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         }
     ],
     "store": {

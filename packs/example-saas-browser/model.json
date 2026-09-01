@@ -1,0 +1,112 @@
+{
+  "name": "example-saas-browser",
+  "version": "1.0.0",
+  "description": "The same reference service watched through a real browser instead of an HTTP client. It needs an attested renderer configured (renderer_url, renderer_token, renderer_digest); without one, browser journeys are refused rather than quietly downgraded, so this pack is not the default.",
+
+  "service": {
+    "name": "Example SaaS (browser)",
+    "slug": "example-saas-browser",
+    "description": "Watched the way a customer uses it: a page, a click, and what the page then says.",
+    "timezone": "Europe/London",
+    "visibility": "public",
+    "maintenance_lead_time": 86400,
+    "coverage_floor_ppm": 990000
+  },
+
+  "components": [
+    {
+      "ref": "checkout",
+      "name": "Checkout",
+      "description": "Placing an order in the interface a customer actually uses.",
+      "user_weight": 4000,
+      "rollup": "any",
+      "position": 1,
+      "showcase": true
+    }
+  ],
+
+  "secrets": [
+    {
+      "name": "example_user",
+      "hosts": ["127.0.0.1", "localhost"],
+      "description": "The dedicated least-privilege account the journey signs in as. It is typed into the page by the renderer and never returned."
+    },
+    {
+      "name": "example_password",
+      "hosts": ["127.0.0.1", "localhost"],
+      "description": "That account's password."
+    }
+  ],
+
+  "monitors": [
+    {
+      "name": "Place an order in the browser",
+      "component": "checkout",
+      "engine": "browser",
+      "interval_seconds": 300,
+      "timeout_seconds": 90,
+      "failure_threshold": 2,
+      "recovery_threshold": 1,
+      "latency_budget_ms": 15000,
+      "viewport": { "width": 1280, "height": 800 },
+      "steps": [
+        {
+          "name": "open the page",
+          "kind": "goto",
+          "url": "http://127.0.0.1:18081/page.html"
+        },
+        {
+          "name": "wait for the button",
+          "kind": "wait",
+          "selector": "#place",
+          "wait_visible": true,
+          "timeout_seconds": 20
+        },
+        {
+          "name": "place an order",
+          "kind": "click",
+          "selector": "#place"
+        },
+        {
+          "name": "read what the page says",
+          "kind": "read",
+          "capture": true,
+          "assertions": [
+            {
+              "source": "body",
+              "op": "contains",
+              "value": "Total: 42.00 GBP",
+              "message": "the order total is not on the page"
+            },
+            {
+              "source": "console",
+              "op": "absent",
+              "message": "the page reported an error to its own console"
+            }
+          ]
+        },
+        {
+          "name": "photograph it",
+          "kind": "screenshot",
+          "screenshot": {
+            "min_ink_ppm": 5000,
+            "max_distance": 8,
+            "store": "on_fault",
+            "masks": [
+              { "x": 0, "y": 0, "w": 320, "h": 40 }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+
+  "objectives": [
+    {
+      "name": "Monthly checkout availability",
+      "metric": "availability",
+      "target_ppm": 999000,
+      "window": "calendar_month"
+    }
+  ]
+}

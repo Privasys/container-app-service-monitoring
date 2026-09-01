@@ -63,6 +63,9 @@ type Engine struct {
 	// operator reading their own access log can tell synthetic traffic
 	// from real users.
 	UserAgent string
+	// Browser is the attested renderer browser journeys run on. Nil, or
+	// unconfigured, means this instance watches over HTTP only.
+	Browser *BrowserClient
 }
 
 // Result is one execution of a journey.
@@ -75,6 +78,10 @@ type Result struct {
 	Steps       []model.StepResult
 	Vars        map[string]string
 	UsedSecrets []string
+	// Captures are the screenshots a browser journey produced, already
+	// measured. The record keeps the measurements; the caller decides
+	// what to do with the bytes.
+	Captures []model.Capture
 }
 
 // New returns an engine.
@@ -89,6 +96,9 @@ func New(resolver SecretResolver, egress *Allowlist) *Engine {
 
 // Run executes a monitor's journey once.
 func (e *Engine) Run(ctx context.Context, m *model.Monitor) Result {
+	if m.Engine == model.EngineBrowser {
+		return e.runBrowser(ctx, m)
+	}
 	start := e.now()
 	red := secrets.NewRedactor()
 	vars := map[string]string{}

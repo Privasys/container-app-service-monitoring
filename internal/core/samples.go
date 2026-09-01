@@ -55,6 +55,9 @@ func (m *Monitor) RecordSamples(samples []model.Sample) (*model.Transaction, []A
 				}
 				s.ID = id
 			}
+			// The images go to the volume; the reading keeps their
+			// measurements and their digests.
+			s.Captures = m.storeCaptures(s.Captures)
 			op, err := sampleOp(*s)
 			if err != nil {
 				return err
@@ -105,6 +108,10 @@ func sampleOp(s model.Sample) (model.WriteOp, error) {
 	if err != nil {
 		return model.WriteOp{}, err
 	}
+	captures, err := jsonBytes(s.Captures)
+	if err != nil {
+		return model.WriteOp{}, err
+	}
 	return model.WriteOp{
 		Table: "samples", Key: map[string]any{"id": s.ID},
 		Values: map[string]any{
@@ -112,7 +119,7 @@ func sampleOp(s model.Sample) (model.WriteOp, error) {
 			"component_id": s.ComponentID, "service_id": s.ServiceID,
 			"vantage": s.Vantage, "started_at": s.StartedAt, "duration_ms": s.DurationMs,
 			"verdict": s.Verdict, "failed_step": s.FailedStep, "error_class": s.ErrorClass,
-			"detail": clip(s.Detail, 1024), "steps": steps,
+			"detail": clip(s.Detail, 1024), "steps": steps, "captures": captures,
 			"manual": s.Manual, "in_maintenance": s.InMaintenance, "pruned": false,
 		},
 	}, nil

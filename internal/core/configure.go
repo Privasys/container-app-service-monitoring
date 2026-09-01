@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
+	"github.com/Privasys/container-app-service-monitoring/internal/journey"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 	"github.com/Privasys/container-app-service-monitoring/internal/pack"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
@@ -47,6 +48,17 @@ type ConfigureRequest struct {
 	// MaintenanceLeadTime is the notice a planned window needs to leave
 	// agreed service time, in seconds.
 	MaintenanceLeadTime int64 `json:"maintenance_lead_time,omitempty"`
+	// RendererURL is the attested browser this instance sends browser
+	// journeys to. Without one, browser journeys are refused rather than
+	// quietly downgraded to an HTTP fetch.
+	RendererURL string `json:"renderer_url,omitempty"`
+	// RendererToken is the secret that renderer requires.
+	RendererToken string `json:"renderer_token,omitempty"`
+	// RendererDigest is the workload image digest the renderer must be
+	// running. A credential is handed over only after the certificate has
+	// been checked against it, so which build receives it is answered by
+	// a hardware quote rather than by a hostname.
+	RendererDigest string `json:"renderer_digest,omitempty"`
 }
 
 // ConfigureResult is what the caller is told.
@@ -59,8 +71,12 @@ type ConfigureResult struct {
 	Objectives  int      `json:"objectives"`
 	Secrets     []string `json:"secrets_expected,omitempty"`
 	Egress      []string `json:"egress_allowlist,omitempty"`
-	Root        string   `json:"root"`
-	Version     uint64   `json:"version"`
+	// Renderer describes the attested browser, if one was configured.
+	// The token is never echoed; a fingerprint of it is, so an operator
+	// can tell one renderer credential from another.
+	Renderer *RendererSummary `json:"renderer,omitempty"`
+	Root     string           `json:"root"`
+	Version  uint64           `json:"version"`
 }
 
 // Configure brings the instance up.
@@ -102,7 +118,16 @@ func (m *Monitor) Configure(p *auth.Principal, req ConfigureRequest, packDir str
 	if h := hostOfTemplate(req.CallbackURL); h != "" {
 		hosts = append(hosts, h)
 	}
+	if h := hostOfTemplate(req.RendererURL); h != "" {
+		hosts = append(hosts, h)
+	}
 	cfg.CallbackHosts = hosts
+	cfg.RendererURL = strings.TrimSpace(req.RendererURL)
+	cfg.RendererToken = req.RendererToken
+	cfg.RendererDigest = strings.ToLower(strings.TrimSpace(req.RendererDigest))
+	if cfg.RendererURL != "" && cfg.RendererToken == "" {
+		return nil, fmt.Errorf("configure: a renderer needs the token it will ask for")
+	}
 
 	m.mu.Lock()
 	m.opts.Tenant = tenant
@@ -146,7 +171,14 @@ func (m *Monitor) Configure(p *auth.Principal, req ConfigureRequest, packDir str
 	m.configured = true
 	m.mu.Unlock()
 	m.refreshEgress()
+	m.applyRenderer(cfg)
 	result.Egress = m.egress.Entries()
+	if cfg.RendererURL != "" {
+		result.Renderer = &RendererSummary{
+			URL: cfg.RendererURL, Digest: cfg.RendererDigest,
+			TokenFingerprint: journey.FingerprintToken(cfg.RendererToken),
+		}
+	}
 
 	if err := m.RecordRuntimeEvent(model.EventConfigure, "configured for "+tenant); err != nil {
 		return nil, err
@@ -248,6 +280,7 @@ func (m *Monitor) SeedPack(p *auth.Principal, pk *pack.Pack, callbackURL string)
 			IntervalSeconds: ms.IntervalSeconds, TimeoutSeconds: ms.TimeoutSeconds,
 			FailureThreshold: ms.FailureThreshold, RecoveryThreshold: ms.RecoveryThreshold,
 			LatencyBudgetMs: ms.LatencyBudgetMs, Steps: ms.Steps,
+			Engine: ms.Engine, Viewport: ms.Viewport,
 		}
 		if _, _, err := m.UpsertMonitor(p, mon, "Add the "+summarise(ms.Name, 40)+" journey"); err != nil {
 			return nil, err
@@ -301,6 +334,7 @@ func (m *Monitor) LoadConfig() (Config, bool, error) {
 	}
 	m.mu.Unlock()
 	m.refreshEgress()
+	m.applyRenderer(cfg)
 	return cfg, true, nil
 }
 
@@ -360,3 +394,35 @@ func orString(a, b string) string {
 }
 
 func jsonUnmarshal(raw []byte, into any) error { return json.Unmarshal(raw, into) }
+
+// RendererSummary is what the record and the caller are told about the
+// attested browser: where it is, which build it must be running, and a
+// fingerprint of the secret rather than the secret.
+type RendererSummary struct {
+	URL              string `json:"url"`
+	Digest           string `json:"digest,omitempty"`
+	TokenFingerprint string `json:"token_fingerprint"`
+}
+
+// applyRenderer points the journey engine at the configured browser.
+//
+// It runs on configure and again on restore, because the engine is
+// built before the configuration is known and a restart must not
+// silently leave browser journeys pointing at nothing.
+func (m *Monitor) applyRenderer(cfg Config) {
+	if m.engine == nil {
+		return
+	}
+	if cfg.RendererURL == "" {
+		m.engine.Browser = nil
+		return
+	}
+	m.engine.Browser = &journey.BrowserClient{
+		URL: cfg.RendererURL, Token: cfg.RendererToken,
+		ExpectedDigest: cfg.RendererDigest,
+		// Attestation is skipped only where the outbound allowlist is
+		// also open, which is a developer's machine and nowhere the
+		// platform runs.
+		Insecure: cfg.RendererDigest == "" && m.egress != nil && m.egress.IsOpen(),
+	}
+}

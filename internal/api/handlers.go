@@ -799,3 +799,66 @@ func (s *Server) prune(req *request) (any, error) {
 	_ = decode(req.r, &body)
 	return req.mon.PruneSamples(req.p, body.Before)
 }
+
+// -- browser journeys ------------------------------------------------------
+
+func (s *Server) listCaptures(req *request) (any, error) {
+	captures, err := req.mon.Captures(req.p, req.r.URL.Query().Get("monitor_id"),
+		intParam(req.r, "limit", 50))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"captures": captures}, nil
+}
+
+// getScreenshot serves a stored image by digest.
+//
+// It is authenticated, unlike the rest of the evidence surface. A folded
+// interval is counts and latencies; a screenshot of a logged-in session
+// is whatever the page was showing, and that is not something to put on
+// the public side of the service by default.
+func (s *Server) getScreenshot(req *request) (any, error) {
+	if !req.p.Can("explorer") {
+		return nil, fmt.Errorf("%s may not read the screenshots", req.p.Acting)
+	}
+	png, err := req.mon.Screenshot(req.r.PathValue("digest"))
+	if err != nil {
+		return nil, fmt.Errorf("no screenshot %s", req.r.PathValue("digest"))
+	}
+	req.w.Header().Set("Content-Type", "image/png")
+	req.w.Header().Set("Cache-Control", "private, max-age=86400")
+	req.w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	req.w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = req.w.Write(png)
+	// The response is already written, so the wrapper has nothing to
+	// serialise.
+	return nil, nil
+}
+
+func (s *Server) approveBaseline(req *request) (any, error) {
+	var body struct {
+		Monitor string `json:"monitor"`
+		Step    string `json:"step"`
+		Message string `json:"message"`
+	}
+	if err := decode(req.r, &body); err != nil {
+		return nil, err
+	}
+	if body.Monitor == "" {
+		body.Monitor = req.r.PathValue("id")
+	}
+	mon, tr, err := req.mon.ApproveBaseline(req.p, body.Monitor, body.Step, body.Message)
+	if err != nil {
+		return nil, err
+	}
+	var approved string
+	for _, step := range mon.Steps {
+		if step.Name == body.Step && step.Screenshot != nil {
+			approved = step.Screenshot.Baseline
+		}
+	}
+	return map[string]any{
+		"monitor": mon.ID, "version": mon.Version, "step": body.Step,
+		"baseline": approved, "txid": tr.TxID,
+	}, nil
+}

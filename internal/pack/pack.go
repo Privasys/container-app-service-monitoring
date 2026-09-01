@@ -77,14 +77,17 @@ type ComponentSpec struct {
 
 // MonitorSpec is a journey.
 type MonitorSpec struct {
-	Name              string       `json:"name"`
-	Component         string       `json:"component"`
-	IntervalSeconds   int          `json:"interval_seconds,omitempty"`
-	TimeoutSeconds    int          `json:"timeout_seconds,omitempty"`
-	FailureThreshold  int          `json:"failure_threshold,omitempty"`
-	RecoveryThreshold int          `json:"recovery_threshold,omitempty"`
-	LatencyBudgetMs   int          `json:"latency_budget_ms,omitempty"`
-	Steps             []model.Step `json:"steps"`
+	Name      string `json:"name"`
+	Component string `json:"component"`
+	// Engine is "http" (the default) or "browser".
+	Engine            string         `json:"engine,omitempty"`
+	Viewport          model.Viewport `json:"viewport,omitempty"`
+	IntervalSeconds   int            `json:"interval_seconds,omitempty"`
+	TimeoutSeconds    int            `json:"timeout_seconds,omitempty"`
+	FailureThreshold  int            `json:"failure_threshold,omitempty"`
+	RecoveryThreshold int            `json:"recovery_threshold,omitempty"`
+	LatencyBudgetMs   int            `json:"latency_budget_ms,omitempty"`
+	Steps             []model.Step   `json:"steps"`
 }
 
 // ObjectiveSpec is a service-level objective.
@@ -185,6 +188,7 @@ func (p *Pack) Validate() error {
 		}
 		candidate := model.Monitor{
 			Name: mon.Name, ComponentID: "pending", Steps: mon.Steps,
+			Engine: mon.Engine, Viewport: mon.Viewport,
 			IntervalSeconds:   orDefault(mon.IntervalSeconds, model.DefaultInterval),
 			TimeoutSeconds:    orDefault(mon.TimeoutSeconds, model.DefaultTimeout),
 			FailureThreshold:  orDefault(mon.FailureThreshold, 2),

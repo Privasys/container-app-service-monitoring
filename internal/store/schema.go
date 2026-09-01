@@ -120,6 +120,8 @@ var baseTables = []tableDDL{
 			recovery_threshold INT NOT NULL,
 			latency_budget_ms INT NOT NULL,
 			steps BLOB NOT NULL,
+			engine VARCHAR(16) NOT NULL,
+			viewport BLOB NOT NULL,
 			retired BOOLEAN NOT NULL,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
@@ -190,6 +192,7 @@ var baseTables = []tableDDL{
 			error_class VARCHAR(24) NOT NULL,
 			detail VARCHAR(1024) NOT NULL,
 			steps BLOB NOT NULL,
+			captures BLOB NOT NULL,
 			manual BOOLEAN NOT NULL,
 			in_maintenance BOOLEAN NOT NULL,
 			pruned BOOLEAN NOT NULL
@@ -465,7 +468,7 @@ var VerifiedColumns = map[string][]string{
 		"latency_p50", "latency_p95", "latency_max", "verdict"},
 	"samples": {"id", "monitor_id", "monitor_version", "component_id", "service_id",
 		"vantage", "started_at", "duration_ms", "verdict", "failed_step",
-		"error_class", "detail", "steps", "manual", "in_maintenance", "pruned"},
+		"error_class", "detail", "steps", "captures", "manual", "in_maintenance", "pruned"},
 	"reports": {"id", "service_id", "period_from", "period_to", "label",
 		"availability_ppm", "user_availability_ppm", "coverage_ppm",
 		"downtime_seconds", "outages", "evidence_hash", "evidence", "document",
