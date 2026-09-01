@@ -39,8 +39,10 @@ type Scheduler struct {
 	Workers int
 	// Tick is the scheduling resolution.
 	Tick time.Duration
-	// Reload is how often the monitor definitions are re-read.
-	Reload time.Duration
+	// ReloadInterval is how often the monitor definitions are re-read.
+	// Changes made through the API do not wait for it: the surface calls
+	// Reload directly.
+	ReloadInterval time.Duration
 	// RollupLag is how far behind the present the folder works, so it
 	// only folds intervals that are closed.
 	RollupLag time.Duration
@@ -58,7 +60,7 @@ type Scheduler struct {
 func New(mon *core.Monitor, log *slog.Logger) *Scheduler {
 	return &Scheduler{
 		mon: mon, engine: mon.Engine(), log: log,
-		Workers: 16, Tick: time.Second, Reload: 30 * time.Second,
+		Workers: 16, Tick: time.Second, ReloadInterval: 30 * time.Second,
 		RollupLag: 90 * time.Second, CheckpointInterval: 6 * time.Hour,
 		RetentionInterval: 6 * time.Hour,
 		lastRun:           map[string]int64{},
@@ -71,7 +73,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(s.Tick)
 	defer ticker.Stop()
-	reload := time.NewTicker(s.Reload)
+	reload := time.NewTicker(s.ReloadInterval)
 	defer reload.Stop()
 	fold := time.NewTicker(30 * time.Second)
 	defer fold.Stop()
@@ -213,6 +215,14 @@ func offsetOf(id string, interval int64) int64 {
 	sum := sha256.Sum256([]byte(id))
 	return int64(binary.BigEndian.Uint64(sum[:8])%uint64(interval)) % interval
 }
+
+// Reload re-reads the monitor definitions.
+//
+// The loop re-reads them on its own timer as well, but a monitor that
+// has just been configured should start being watched now rather than
+// up to a reload later: the gap would be a coverage gap in the first
+// period, caused by us.
+func (s *Scheduler) Reload() { s.reload() }
 
 func (s *Scheduler) reload() {
 	monitors, err := s.mon.Monitors("")

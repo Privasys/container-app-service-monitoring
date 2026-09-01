@@ -307,6 +307,7 @@ func (s *Server) upsertMonitor(req *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.scheduler.Reload()
 	return map[string]any{"monitor": mon, "txid": tr.TxID, "version": mon.Version}, nil
 }
 
@@ -322,6 +323,7 @@ func (s *Server) setMonitorEnabled(req *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.scheduler.Reload()
 	return map[string]any{"txid": tr.TxID, "enabled": body.Enabled}, nil
 }
 

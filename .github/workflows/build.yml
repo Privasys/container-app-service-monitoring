@@ -141,9 +141,15 @@ jobs:
 
           echo "--- the journey logs in and places an order ---"
           START=$(date +%s)
-          sleep 35
-          curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/samples?limit=5" > /tmp/samples.json
-          grep -q '"verdict":"up"' /tmp/samples.json
+          ok=0
+          for _ in $(seq 1 40); do
+            curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/samples?limit=5" > /tmp/samples.json
+            if grep -q '"verdict":"up"' /tmp/samples.json; then ok=1; break; fi
+            sleep 3
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::No passing reading was taken."; cat /tmp/samples.json; exit 1
+          fi
           # A capture that carried the credential would be the one
           # failure that must never happen.
           if grep -q 'correct horse battery staple' /tmp/samples.json; then

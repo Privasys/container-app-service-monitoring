@@ -148,6 +148,10 @@ func run(log *slog.Logger) error {
 			return nil, err
 		}
 		publishExtensions(ctx, log, manager, mon, material)
+		// Start watching what was just configured, rather than at the
+		// scheduler's next reload: that delay would be a coverage gap in
+		// the first period, and one we caused.
+		scheduler.Reload()
 		return result, nil
 	}
 
