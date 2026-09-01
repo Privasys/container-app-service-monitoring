@@ -124,8 +124,10 @@ func (o *observation) value(a model.Assertion) (value string, present bool, fail
 		v := o.vars[VarOCRText]
 		return v, v != "", ""
 	case model.SrcConsole:
+		// Console output is present only when there is some. Otherwise an
+		// assertion that the page logged no errors could never hold.
 		v := o.vars[VarConsole]
-		return v, true, ""
+		return v, strings.TrimSpace(v) != "", ""
 	case model.SrcJSON:
 		doc, ok := o.json()
 		if !ok {

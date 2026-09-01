@@ -83,10 +83,15 @@ func (a Analysis) Blank(floorPPM int64) bool {
 }
 
 // DefaultInkFloorPPM is the default threshold for "nothing rendered".
-// A page of ordinary text covers a few per cent of its area; 0.5% is
-// comfortably below anything with content on it and comfortably above a
-// uniform background with a scrollbar.
-const DefaultInkFloorPPM = 5_000
+//
+// Measured against real pages: a sparse one (a heading, a button, a
+// line of text) comes out around 1%, and a dense one several times
+// that. A blank page is essentially zero, and so is a page that is one
+// solid colour, because the colour becomes the background everything
+// else is measured against. The floor sits well below the sparse case
+// on purpose: this is an emptiness detector, not a content check, and a
+// threshold that fires on a thin page teaches everyone to ignore it.
+const DefaultInkFloorPPM = 1_000
 
 // Analyse computes everything about one screenshot in a single decode.
 func Analyse(raw []byte, masks []Region) (Analysis, error) {

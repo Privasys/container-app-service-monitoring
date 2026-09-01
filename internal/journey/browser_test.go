@@ -355,3 +355,42 @@ func TestABrowserJourneyNeedsANavigation(t *testing.T) {
 		t.Fatal("a journey that never navigates was accepted")
 	}
 }
+
+// A page that logged nothing must satisfy an assertion that it logged
+// nothing. Getting this backwards makes the check useless in the one
+// direction anybody writes it.
+func TestAQuietConsoleSatisfiesAnAbsenceAssertion(t *testing.T) {
+	stub := newStubRenderer(t, map[string]any{
+		"ok": true, "duration_ms": 300,
+		"steps": []map[string]any{
+			{"name": "open", "kind": "goto", "ok": true},
+			{"name": "read", "kind": "text", "ok": true, "text": "all well"},
+		},
+	})
+	engine := journey.New(newVault(t, "app.example.com"), openList())
+	engine.Browser = stub.client()
+
+	mon := browserMonitor([]model.Step{
+		{Name: "open", Kind: model.StepGoto, URL: "https://app.example.com/"},
+		{Name: "read", Kind: model.StepReadPage, Capture: true,
+			Assertions: []model.Assertion{
+				{Source: model.SrcConsole, Op: model.OpAbsent,
+					Message: "the page reported an error to its own console"},
+			}},
+	})
+
+	res := engine.Run(context.Background(), mon)
+	if res.Verdict != model.VerdictUp {
+		t.Fatalf("a quiet console failed an absence assertion: %s", res.Detail)
+	}
+
+	// And a page that did log an error fails it.
+	stub.reply["console"] = []string{"error: Uncaught TypeError"}
+	res = engine.Run(context.Background(), mon)
+	if res.Verdict != model.VerdictDown {
+		t.Fatalf("a console error was not noticed: verdict = %s", res.Verdict)
+	}
+	if !strings.Contains(res.Detail, "reported an error") {
+		t.Fatalf("detail = %q", res.Detail)
+	}
+}
