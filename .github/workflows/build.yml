@@ -289,12 +289,24 @@ jobs:
           curl -fsS "http://127.0.0.1:$PORT/status" | grep -q '<title>'
 
           echo "--- self-recovery: a restart is not a reconfiguration ---"
-          docker restart monitor-smoke > /dev/null
-          for _ in $(seq 1 30); do
-            if curl -fs "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'; then break; fi
+          docker ps -a --filter name=monitor-smoke --format 'before the restart: {{.Status}}'
+          if ! docker restart --time 25 monitor-smoke; then
+            echo "::error::The container did not restart."
+            docker ps -a --filter name=monitor-smoke --format '{{.Status}}'
+            docker logs --tail 50 monitor-smoke || true
+            exit 1
+          fi
+          docker ps -a --filter name=monitor-smoke --format 'after the restart: {{.Status}}'
+          ok=0
+          for _ in $(seq 1 60); do
+            if curl -fs "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'; then ok=1; break; fi
             sleep 1
           done
-          curl -fsS "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'
+          if [ "$ok" != "1" ]; then
+            echo "::error::The monitor did not come back ready; a restart should not need reconfiguring."
+            docker logs --tail 50 monitor-smoke || true
+            exit 1
+          fi
           curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/events" > /tmp/events.json
           # The gap the restart left is written down, because a monitor
           # that was not running did not see a service that was up.
