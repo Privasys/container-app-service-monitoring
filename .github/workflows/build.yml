@@ -118,9 +118,12 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"tenant":"acme","pack_ref":"example-saas","callback_url":"http://127.0.0.1:18081/hooks"}' \
             > /tmp/configured.json
-          jq -e '.monitors >= 2' /tmp/configured.json > /dev/null
-          jq -e '.secrets_expected | length >= 2' /tmp/configured.json > /dev/null
-          curl -fsS "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'
+          if ! jq -e '.monitors >= 2 and (.secrets_expected | length >= 2)' /tmp/configured.json > /dev/null; then
+            echo "::error::The service model did not seed."; cat /tmp/configured.json; exit 1
+          fi
+          if ! curl -fsS "http://127.0.0.1:$PORT/readiness" | grep -q '"state":"ready"'; then
+            echo "::error::Configuring did not lift the gate."; exit 1
+          fi
 
           # Deliver the credentials. This is the whole product: a real
           # least-privilege account, sealed to this build, bound to the
@@ -141,21 +144,28 @@ jobs:
 
           echo "--- the journey logs in and places an order ---"
           START=$(date +%s)
+          # Wait for a passing reading FROM THE CREDENTIALED JOURNEY. The
+          # reference model also watches a health endpoint that needs no
+          # credential, and its reading arrives first; stopping there
+          # would prove the monitor runs, not that it can be trusted with
+          # an account.
           ok=0
           for _ in $(seq 1 40); do
-            curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/samples?limit=5" > /tmp/samples.json
-            if grep -q '"verdict":"up"' /tmp/samples.json; then ok=1; break; fi
+            curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/samples?limit=10" > /tmp/samples.json || true
+            if grep -q '"verdict":"up"' /tmp/samples.json && grep -q 'redacted:' /tmp/samples.json; then
+              ok=1; break
+            fi
             sleep 3
           done
           if [ "$ok" != "1" ]; then
-            echo "::error::No passing reading was taken."; cat /tmp/samples.json; exit 1
+            echo "::error::No passing reading from the journey that logs in."
+            cat /tmp/samples.json; exit 1
           fi
           # A capture that carried the credential would be the one
           # failure that must never happen.
           if grep -q 'correct horse battery staple' /tmp/samples.json; then
             echo "::error::A credential reached the record."; exit 1
           fi
-          grep -q 'redacted:' /tmp/samples.json
 
           echo "--- a credential refuses to travel to a second host ---"
           CMP=$(curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/monitors" \
@@ -171,10 +181,13 @@ jobs:
                        expect_status: [200]}]}')" | jq -r '.monitor.id')
           curl -fsS -H "$AUTH" -X POST "http://127.0.0.1:$PORT/api/v1/monitors/$BAD/run" \
             -H 'Content-Type: application/json' -d '{}' > /tmp/refused.json
-          grep -q '"error_class":"policy"' /tmp/refused.json
-          grep -q 'not bound to that host' /tmp/refused.json
-          # A refusal is a monitoring fault, never the customer's downtime.
-          grep -q '"verdict":"error"' /tmp/refused.json
+          if ! grep -q '"error_class":"policy"' /tmp/refused.json ||
+             ! grep -q 'not bound to that host' /tmp/refused.json ||
+             ! grep -q '"verdict":"error"' /tmp/refused.json; then
+            # A refusal is a monitoring fault, never the customer's downtime.
+            echo "::error::A credential was not refused for a host it is not bound to."
+            cat /tmp/refused.json; exit 1
+          fi
 
           echo "--- break the service and require an incident and an alert ---"
           curl -fsS -X POST http://127.0.0.1:18081/admin/break \
@@ -286,7 +299,10 @@ jobs:
           curl -fsS "http://127.0.0.1:$PORT/api/v2/summary.json" | jq -e '.status.indicator' > /dev/null
           curl -fsS "http://127.0.0.1:$PORT/.well-known/privasys-monitor.json" \
             | jq -e '.signing_key.public_key != ""' > /dev/null
-          curl -fsS "http://127.0.0.1:$PORT/status" | grep -q '<title>'
+          curl -fsS "http://127.0.0.1:$PORT/status" > /tmp/page.html
+          if ! grep -q '<title>' /tmp/page.html; then
+            echo "::error::The status page did not render."; head -20 /tmp/page.html; exit 1
+          fi
 
           echo "--- self-recovery: a restart is not a reconfiguration ---"
           docker ps -a --filter name=monitor-smoke --format 'before the restart: {{.Status}}'
@@ -310,7 +326,10 @@ jobs:
           curl -fsS -H "$AUTH" "http://127.0.0.1:$PORT/api/v1/events" > /tmp/events.json
           # The gap the restart left is written down, because a monitor
           # that was not running did not see a service that was up.
-          jq -e '[.events[] | select(.kind == "boot")] | length >= 2' /tmp/events.json > /dev/null
+          if ! jq -e '[.events[] | select(.kind == "boot")] | length >= 2' /tmp/events.json > /dev/null; then
+            echo "::error::The restart is not in the record; a gap the monitor caused has to be visible."
+            jq -c '.events' /tmp/events.json; exit 1
+          fi
 
           echo "--- container logs ---"; docker logs monitor-smoke | tail -20
           docker rm -f monitor-smoke > /dev/null 2>&1 || true
