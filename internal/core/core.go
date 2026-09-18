@@ -101,7 +101,23 @@ type Config struct {
 	RendererURL    string `json:"renderer_url,omitempty"`
 	RendererToken  string `json:"renderer_token,omitempty"`
 	RendererDigest string `json:"renderer_digest,omitempty"`
-	ConfiguredAt   int64  `json:"configured_at"`
+	// PlatformClock turns this instance into the fleet's clock monitor.
+	// Absent on every customer instance.
+	PlatformClock *PlatformClock `json:"platform_clock,omitempty"`
+	ConfiguredAt  int64          `json:"configured_at"`
+}
+
+// PlatformClock is the platform clock's configuration.
+type PlatformClock struct {
+	Enabled bool `json:"enabled"`
+	// ManagementURL is the platform control plane the monitor lists the
+	// enclaves from and asks for quarantines.
+	ManagementURL string `json:"management_url"`
+	// CallbackURL is where the clock's alerts go.
+	CallbackURL string `json:"callback_url,omitempty"`
+	// AllowDebugImages accepts runtimes on development images, whose
+	// certificates say so. A production fleet leaves it off.
+	AllowDebugImages bool `json:"allow_debug_images,omitempty"`
 }
 
 // Defaults for a configuration that did not say.
@@ -192,6 +208,10 @@ var pkColumns = map[string][]string{
 	"prune_marks":         {"txid", "idx"},
 	"registry":            {"k"},
 	"tx_refs":             {"txid", "idx"},
+	"clock_readings":      {"id"},
+	"clock_incidents":     {"id"},
+	"clock_actions":       {"id"},
+	"clock_enclaves":      {"enclave_id"},
 }
 
 // commit runs one action: validate the envelope, write the transaction

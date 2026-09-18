@@ -59,6 +59,9 @@ type ConfigureRequest struct {
 	// been checked against it, so which build receives it is answered by
 	// a hardware quote rather than by a hostname.
 	RendererDigest string `json:"renderer_digest,omitempty"`
+	// PlatformClock turns the instance into the fleet's clock monitor.
+	// Only the platform's own instance sets it.
+	PlatformClock *PlatformClock `json:"platform_clock,omitempty"`
 }
 
 // ConfigureResult is what the caller is told.
@@ -75,8 +78,10 @@ type ConfigureResult struct {
 	// The token is never echoed; a fingerprint of it is, so an operator
 	// can tell one renderer credential from another.
 	Renderer *RendererSummary `json:"renderer,omitempty"`
-	Root     string           `json:"root"`
-	Version  uint64           `json:"version"`
+	// PlatformClock echoes the clock mode, when it is on.
+	PlatformClock *PlatformClock `json:"platform_clock,omitempty"`
+	Root          string         `json:"root"`
+	Version       uint64         `json:"version"`
 }
 
 // Configure brings the instance up.
@@ -120,6 +125,16 @@ func (m *Monitor) Configure(p *auth.Principal, req ConfigureRequest, packDir str
 	}
 	if h := hostOfTemplate(req.RendererURL); h != "" {
 		hosts = append(hosts, h)
+	}
+	clock, err := normalisePlatformClock(req.PlatformClock, req.CallbackURL)
+	if err != nil {
+		return nil, err
+	}
+	if clock != nil {
+		cfg.PlatformClock = clock
+		if h := hostOfTemplate(clock.CallbackURL); h != "" {
+			hosts = append(hosts, h)
+		}
 	}
 	cfg.CallbackHosts = hosts
 	cfg.RendererURL = strings.TrimSpace(req.RendererURL)
@@ -173,6 +188,7 @@ func (m *Monitor) Configure(p *auth.Principal, req ConfigureRequest, packDir str
 	m.refreshEgress()
 	m.applyRenderer(cfg)
 	result.Egress = m.egress.Entries()
+	result.PlatformClock = cfg.PlatformClock
 	if cfg.RendererURL != "" {
 		result.Renderer = &RendererSummary{
 			URL: cfg.RendererURL, Digest: cfg.RendererDigest,

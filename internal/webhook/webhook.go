@@ -145,11 +145,7 @@ func (s *Sender) Enqueue(a core.Alert) {
 }
 
 func (s *Sender) callbackFor(serviceID string) string {
-	svc, err := s.mon.Service(serviceID)
-	if err != nil || svc == nil {
-		return ""
-	}
-	return svc.CallbackURL
+	return s.mon.AlertCallback(serviceID)
 }
 
 func (s *Sender) deliver(ctx context.Context, j job) {

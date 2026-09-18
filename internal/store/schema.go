@@ -424,6 +424,110 @@ var baseTables = []tableDDL{
 			updated_at BIGINT NOT NULL
 		)`,
 	},
+
+	// The platform clock. Empty on every instance that does not run it.
+	// Times here are Unix milliseconds, the unit the runtimes speak.
+	{
+		// One row per poll of an enclave runtime, answered or not.
+		name: "clock_readings",
+		ddl: `CREATE TABLE ` + "`clock_readings`" + ` (
+			id VARCHAR(96) PRIMARY KEY,
+			enclave_id VARCHAR(96) NOT NULL,
+			enclave_name VARCHAR(160) NOT NULL,
+			tee_type VARCHAR(16) NOT NULL,
+			cause VARCHAR(16) NOT NULL,
+			incident_id VARCHAR(96) NOT NULL,
+			seq BIGINT NOT NULL,
+			sent_ms BIGINT NOT NULL,
+			monitor_ms BIGINT NOT NULL,
+			rtt_ms BIGINT NOT NULL,
+			outcome VARCHAR(16) NOT NULL,
+			error_text VARCHAR(512) NOT NULL,
+			http_status INT NOT NULL,
+			runtime_kind VARCHAR(16) NOT NULL,
+			host_ms BIGINT NOT NULL,
+			trusted_ms BIGINT NOT NULL,
+			floor_ms BIGINT NOT NULL,
+			flagged BOOLEAN NOT NULL,
+			reason VARCHAR(64) NOT NULL,
+			verdict VARCHAR(32) NOT NULL,
+			nts_ms BIGINT NOT NULL,
+			nts_servers VARCHAR(512) NOT NULL,
+			config_key_id VARCHAR(32) NOT NULL,
+			platform_id VARCHAR(96) NOT NULL,
+			drift_ms BIGINT NOT NULL
+		)`,
+		indexes: []string{
+			"CREATE INDEX `clk_enclave_time` ON `clock_readings` (enclave_id, monitor_ms)",
+			"CREATE INDEX `clk_seq` ON `clock_readings` (seq)",
+		},
+	},
+	{
+		// Incident reports as received. A report is a claim; what the
+		// monitor did about it is in the reading and the action that
+		// followed.
+		name: "clock_incidents",
+		ddl: `CREATE TABLE ` + "`clock_incidents`" + ` (
+			id VARCHAR(96) PRIMARY KEY,
+			enclave_id VARCHAR(96) NOT NULL,
+			reason VARCHAR(64) NOT NULL,
+			host_ms BIGINT NOT NULL,
+			floor_ms BIGINT NOT NULL,
+			nts_ms BIGINT NOT NULL,
+			nonce VARCHAR(64) NOT NULL,
+			received_ms BIGINT NOT NULL,
+			known_enclave BOOLEAN NOT NULL,
+			remote_addr VARCHAR(96) NOT NULL
+		)`,
+		indexes: []string{
+			"CREATE INDEX `clki_enclave_time` ON `clock_incidents` (enclave_id, received_ms)",
+		},
+	},
+	{
+		// Every quarantine and release the monitor asked for, including
+		// the ones the platform refused.
+		name: "clock_actions",
+		ddl: `CREATE TABLE ` + "`clock_actions`" + ` (
+			id VARCHAR(96) PRIMARY KEY,
+			enclave_id VARCHAR(96) NOT NULL,
+			op_kind VARCHAR(16) NOT NULL,
+			reason VARCHAR(255) NOT NULL,
+			reading_id VARCHAR(96) NOT NULL,
+			evidence BLOB NOT NULL,
+			applied BOOLEAN NOT NULL,
+			http_status INT NOT NULL,
+			error_text VARCHAR(512) NOT NULL,
+			at_ms BIGINT NOT NULL
+		)`,
+		indexes: []string{
+			"CREATE INDEX `clka_enclave_time` ON `clock_actions` (enclave_id, at_ms)",
+		},
+	},
+	{
+		// The current position on each enclave: the fleet view.
+		name: "clock_enclaves",
+		ddl: `CREATE TABLE ` + "`clock_enclaves`" + ` (
+			enclave_id VARCHAR(96) PRIMARY KEY,
+			name VARCHAR(160) NOT NULL,
+			tee_type VARCHAR(16) NOT NULL,
+			mgr_hostname VARCHAR(255) NOT NULL,
+			last_reading_id VARCHAR(96) NOT NULL,
+			last_outcome VARCHAR(16) NOT NULL,
+			last_ms BIGINT NOT NULL,
+			last_ok_ms BIGINT NOT NULL,
+			last_verdict VARCHAR(32) NOT NULL,
+			last_flagged BOOLEAN NOT NULL,
+			last_reason VARCHAR(64) NOT NULL,
+			last_drift_ms BIGINT NOT NULL,
+			last_host_ms BIGINT NOT NULL,
+			last_config_key_id VARCHAR(32) NOT NULL,
+			config_missing BOOLEAN NOT NULL,
+			quarantined BOOLEAN NOT NULL,
+			quarantined_ms BIGINT NOT NULL,
+			quarantine_reason VARCHAR(255) NOT NULL,
+			updated_ms BIGINT NOT NULL
+		)`,
+	},
 }
 
 type tableDDL struct {
