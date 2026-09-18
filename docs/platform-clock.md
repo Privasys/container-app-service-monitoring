@@ -162,12 +162,18 @@ Reports cause at most one poll of an enclave a minute; the scheduled
 round polls it every five minutes regardless.
 
 Because the endpoint takes no credentials, what it can cost is bounded.
-A report is taken only for an enclave in the platform's latest list,
-and at most six a minute for one enclave and sixty a minute in all. Each
+A report is taken only for an enclave in the platform's list, and at most six a minute for one enclave and sixty a minute in all. Each
 report taken is one ledger write, so that is also the bound on what the
 endpoint can write. A refused report gets no receipt: 404 for an
 enclave the monitor does not watch, 429 (with `Retry-After`) over the
 rate, 400 for a malformed report.
+
+The list is fetched as soon as the clock starts, before its first NTS
+fetch, and again at every round. A report naming an enclave the list
+does not have (one that registered since the last round) causes one
+more fetch, then the check again; that happens at most once a minute,
+and fetches never overlap, so made-up enclave ids cannot drive calls to
+the control plane.
 
 Runtimes reach this endpoint the same way the monitor reaches them,
 through the gateway's splice path, and the handler reads nothing a

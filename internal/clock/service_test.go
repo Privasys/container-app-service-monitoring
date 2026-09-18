@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -32,6 +33,8 @@ type fakeClock struct {
 	now   time.Time
 	ok    bool
 	floor time.Time
+	// gate, when set, holds Refresh until it is closed.
+	gate chan struct{}
 }
 
 func (c *fakeClock) Now() (time.Time, bool) {
@@ -45,7 +48,18 @@ func (c *fakeClock) SetFloor(t time.Time) {
 	defer c.mu.Unlock()
 	c.floor = t
 }
-func (c *fakeClock) Refresh(context.Context) ([]timesource.Sample, error) { return nil, nil }
+func (c *fakeClock) Refresh(ctx context.Context) ([]timesource.Sample, error) {
+	c.mu.Lock()
+	gate := c.gate
+	c.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+		}
+	}
+	return nil, nil
+}
 func (c *fakeClock) Status() timesource.Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,11 +72,13 @@ type fakePlatform struct {
 	enclaves    []Enclave
 	quarantined map[string]string
 	calls       []string
+	lists       int
 }
 
 func (p *fakePlatform) Enclaves(context.Context) ([]Enclave, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.lists++
 	out := make([]Enclave, len(p.enclaves))
 	for i, e := range p.enclaves {
 		reason, q := p.quarantined[e.ID]
@@ -685,4 +701,135 @@ func TestTheRateLimitIsPerEnclaveAndGlobal(t *testing.T) {
 	if l.allow("a", later) {
 		t.Fatal("the per-enclave bucket refilled too much")
 	}
+}
+
+func (p *fakePlatform) listCalls() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lists
+}
+
+func TestANewlyRegisteredEnclaveIsFoundOnceAMinute(t *testing.T) {
+	r := newRig(t)
+	// The start and the first round have listed; let a minute pass.
+	r.svc.mu.Lock()
+	r.svc.listTried = time.Now().Add(-listRefreshGap)
+	r.svc.mu.Unlock()
+	before := r.platform.listCalls()
+
+	// An enclave registers after the last list, and reports straight away.
+	fresh := Enclave{ID: "22222222-3333-4444-5555-666666666666", Name: "m7-dev", TeeType: "tdx",
+		MgrHostname: "m7-dev-mgr.apps.example"}
+	r.platform.mu.Lock()
+	r.platform.enclaves = append(r.platform.enclaves, fresh)
+	r.platform.mu.Unlock()
+	if _, err := r.svc.Incident(context.Background(), newReport(fresh.ID), "192.0.2.1"); err != nil {
+		t.Fatalf("a report from a newly listed enclave was refused: %v", err)
+	}
+	if got := r.platform.listCalls() - before; got != 1 {
+		t.Fatalf("%d list calls, want 1", got)
+	}
+	// The report causes a poll of the new enclave; let it finish.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		readings, err := r.mon.ClockReadings(fresh.ID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(readings) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the new enclave was never polled")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	l := r.svc.lockFor(fresh.ID)
+	l.Lock()
+	l.Unlock()
+
+	// Made-up ids, many at once: no further list call within the minute,
+	// and every one refused.
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := fmt.Sprintf("99999999-0000-0000-0000-%012d", i)
+			if _, err := r.svc.Incident(context.Background(), newReport(id), "192.0.2.1"); !errors.Is(err, ErrUnknownEnclave) {
+				t.Errorf("an unknown enclave got %v", err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if got := r.platform.listCalls() - before; got != 1 {
+		t.Fatalf("unknown ids drove %d list calls in a minute, want 1", got)
+	}
+}
+
+func TestConcurrentRefreshesShareOneCall(t *testing.T) {
+	r := newRig(t)
+	r.svc.mu.Lock()
+	r.svc.listTried = time.Time{}
+	r.svc.mu.Unlock()
+	before := r.platform.listCalls()
+	r.platform.mu.Lock() // hold the fetch so the callers pile up on it
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = r.svc.refreshList(context.Background(), false)
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	r.platform.mu.Unlock()
+	wg.Wait()
+	if got := r.platform.listCalls() - before; got != 1 {
+		t.Fatalf("%d concurrent callers made %d list calls, want 1", 10, got)
+	}
+}
+
+func TestTheListIsFetchedBeforeTheFirstNTSRefresh(t *testing.T) {
+	r := newRig(t)
+	r.svc.Stop()
+
+	// Restart with the NTS refresh held: reports must be taken anyway,
+	// because the list comes first.
+	gate := make(chan struct{})
+	r.clock.mu.Lock()
+	r.clock.gate = gate
+	r.clock.mu.Unlock()
+	defer close(gate)
+	svc := NewService(r.mon, r.svc.Signer(), r.clock, func(core.PlatformClock, func() time.Time, CredentialSource) (PlatformAPI, Poller) {
+		return r.platform, r.poller
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Interval = time.Hour
+	svc.Apply(r.mon.PlatformClockConfig())
+	defer svc.Stop()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := svc.lookup(r.enclave.ID); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the list was not fetched while the NTS refresh was held")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); err != nil {
+		t.Fatalf("a report at start was refused: %v", err)
+	}
+	// Let the poll the report causes finish before the store closes.
+	deadline = time.Now().Add(5 * time.Second)
+	for r.incidentPolls() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the report caused no poll")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	l := svc.lockFor(r.enclave.ID)
+	l.Lock()
+	l.Unlock()
 }

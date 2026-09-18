@@ -73,10 +73,14 @@ type Service struct {
 	poller   Poller
 	enclaves map[string]Enclave
 	listedAt time.Time
-	cycle    CycleStatus
-	timeLost bool
-	creds    credCache
-	locks    map[string]*sync.Mutex
+	// listing is the fetch of the enclave list in flight, if any, and
+	// listTried when the last one started.
+	listing   *listFlight
+	listTried time.Time
+	cycle     CycleStatus
+	timeLost  bool
+	creds     credCache
+	locks     map[string]*sync.Mutex
 	// lastIncidentPoll is when a report last caused a poll of each enclave.
 	lastIncidentPoll map[string]time.Time
 	incidentLimit    *rateLimit
@@ -189,6 +193,11 @@ func (s *Service) loadHighWater() {
 }
 
 func (s *Service) run(ctx context.Context) {
+	// The list first, before the NTS fetch the round starts with: the
+	// incident endpoint takes reports only for listed enclaves.
+	if err := s.refreshList(ctx, true); err != nil {
+		s.log.Error("could not list the enclaves at start", "error", err)
+	}
 	interval := s.Interval
 	if interval <= 0 {
 		interval = DefaultInterval
@@ -272,18 +281,9 @@ func (s *Service) Cycle(ctx context.Context) {
 	if platform == nil {
 		return
 	}
-	listed, err := platform.Enclaves(ctx)
-	if err != nil {
+	if err := s.refreshList(ctx, true); err != nil {
 		status.Error = "listing the enclaves: " + err.Error()
 		s.log.Error("could not list the enclaves; polling the last known list", "error", err)
-	} else {
-		s.mu.Lock()
-		s.enclaves = make(map[string]Enclave, len(listed))
-		for _, e := range listed {
-			s.enclaves[e.ID] = e
-		}
-		s.listedAt = time.Now()
-		s.mu.Unlock()
 	}
 
 	s.mu.Lock()
@@ -647,8 +647,14 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 	if err := report.Validate(); err != nil {
 		return Receipt{}, err
 	}
+	// An enclave the list does not have may have registered since, or the
+	// list may still be on its way at start: one bounded, shared fetch,
+	// then the check again. The runtime waits five seconds for a receipt,
+	// so the fetch is not waited for longer than three.
+	listCtx, cancelList := context.WithTimeout(ctx, 3*time.Second)
+	e, known := s.lookupOrRefresh(listCtx, report.EnclaveID)
+	cancelList()
 	s.mu.Lock()
-	e, known := s.enclaves[report.EnclaveID]
 	allowed := known && s.incidentLimit.allow(report.EnclaveID, time.Now())
 	s.mu.Unlock()
 	if !known {
@@ -711,42 +717,14 @@ func (s *Service) pollAfterIncident(e Enclave, incidentID string) {
 	}
 }
 
-// refreshFor relists the fleet when a report names an enclave the last
-// list did not have, at most every thirty seconds.
-func (s *Service) refreshFor(ctx context.Context, enclaveID string) (Enclave, bool) {
-	s.mu.Lock()
-	platform, listedAt := s.platform, s.listedAt
-	s.mu.Unlock()
-	if platform == nil || time.Since(listedAt) < 30*time.Second {
-		return Enclave{}, false
-	}
-	listed, err := platform.Enclaves(ctx)
-	if err != nil {
-		return Enclave{}, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.enclaves = make(map[string]Enclave, len(listed))
-	for _, e := range listed {
-		s.enclaves[e.ID] = e
-	}
-	s.listedAt = time.Now()
-	e, ok := s.enclaves[enclaveID]
-	return e, ok
-}
-
 // PollNow polls one enclave on request.
 func (s *Service) PollNow(ctx context.Context, enclaveID string) (*model.ClockReading, error) {
 	if !s.Enabled() {
 		return nil, errors.New("clock: the platform clock is off")
 	}
-	s.mu.Lock()
-	e, ok := s.enclaves[enclaveID]
-	s.mu.Unlock()
+	e, ok := s.lookupOrRefresh(ctx, enclaveID)
 	if !ok {
-		if e, ok = s.refreshFor(ctx, enclaveID); !ok {
-			return nil, fmt.Errorf("no enclave %s in the fleet", enclaveID)
-		}
+		return nil, fmt.Errorf("no enclave %s in the fleet", enclaveID)
 	}
 	return s.Poll(ctx, e, model.ClockCauseManual, "")
 }
