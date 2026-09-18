@@ -7,12 +7,13 @@
 # provenance-free on purpose: an OCI attestation index would change the
 # manifest digest the enclave pins at OID 1.3.6.1.4.1.65230.3.2.
 
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not refetch them.
 COPY go.mod go.sum ./
+COPY third_party ./third_party
 RUN go mod download
 
 COPY . .

@@ -1,11 +1,20 @@
 module github.com/Privasys/container-app-service-monitoring
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/Privasys/immutable-ledger v0.0.0-20260827160852-bf905d08811d
+	github.com/beevik/ntp v1.5.0
+	github.com/beevik/nts v0.3.2
 	github.com/cockroachdb/pebble/v2 v2.1.7
 	github.com/dolthub/go-mysql-server v0.20.0
+)
+
+require (
+	github.com/aead/cmac v0.0.0-20160719120800-7af84192f0b1 // indirect
+	github.com/secure-io/siv-go v0.0.0-20180922214919-5ff40651e2c4 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260625142307-59b4966ccb57 // indirect
 )
 
 require (
@@ -49,13 +58,17 @@ require (
 	go.opentelemetry.io/otel v1.31.0 // indirect
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df // indirect
-	golang.org/x/mod v0.12.0 // indirect
-	golang.org/x/sync v0.7.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
-	golang.org/x/tools v0.13.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 	google.golang.org/grpc v1.56.3 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 )
+
+// A copy of siv-go without its amd64 assembly, which faults decrypting
+// some NTS replies. See third_party/siv-go/PRIVASYS.md.
+replace github.com/secure-io/siv-go => ./third_party/siv-go
