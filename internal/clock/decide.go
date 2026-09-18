@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
 
@@ -84,8 +85,7 @@ func Decide(prev model.ClockEnclave, r model.ClockReading, platformQuarantined b
 			}
 			return Decision{Op: model.ClockOpQuarantine, Reason: reason}
 		}
-		if ours && r.Verdict == VerdictInSync && !r.Flagged && r.TrustedMs != 0 &&
-			abs(r.DriftMs) <= Tolerance {
+		if ours && cleanReading(r) {
 			return Decision{Op: model.ClockOpRelease, Reason: fmt.Sprintf(
 				"clock: the host clock is back in sync (drift %s, verdict in_sync, not flagged)",
 				fmtMs(r.DriftMs))}
@@ -173,4 +173,72 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// Vaults.
+//
+// A vault is never quarantined: callers reach it directly at its own
+// address, so there is no gateway to withhold it. The same readings that
+// would quarantine an enclave raise an alert on a vault instead, and the
+// first clean poll after one raises a recovered alert:
+//
+//   - clock.vault_host_clock_wrong: verdict host_clock_wrong, a flagged
+//     (frozen) answer, no trusted time (failing closed, answered or
+//     refused), or a host clock more than the tolerance from the
+//     monitor's;
+//   - clock.vault_unreachable: MaxFailedPolls polls in a row with no
+//     answer;
+//   - clock.vault_recovered: an attested answer, verdict in_sync, not
+//     flagged, a trusted time, within the tolerance, while one of the two
+//     above stands.
+//
+// An alert is raised on the change, not on every reading: the same
+// problem again raises nothing, a different one raises its own alert.
+
+// VaultDecision is what a vault reading calls for.
+type VaultDecision struct {
+	// Event is the alert to raise, or empty.
+	Event  string
+	Reason string
+}
+
+// DecideVault applies the vault rules to one reading. prev is the position
+// before it; standing is the alert in force on the vault ("" for none).
+func DecideVault(prev model.ClockEnclave, r model.ClockReading, standing, keyID string) VaultDecision {
+	raise := func(event, reason string) VaultDecision {
+		if event == standing {
+			return VaultDecision{}
+		}
+		return VaultDecision{Event: event, Reason: reason}
+	}
+	if r.Outcome == model.ClockOutcomeOK {
+		if reason := clockProblem(r); reason != "" {
+			return raise(core.EventClockVaultHostClockWrong, reason)
+		}
+		if standing != "" && cleanReading(r) {
+			return VaultDecision{Event: core.EventClockVaultRecovered, Reason: fmt.Sprintf(
+				"clock: the vault's host clock is back in sync (drift %s, verdict in_sync, not flagged)",
+				fmtMs(r.DriftMs))}
+		}
+		return VaultDecision{}
+	}
+	if configMissing(r, keyID) {
+		return VaultDecision{}
+	}
+	if failedClosed(r) {
+		return raise(core.EventClockVaultHostClockWrong, fmt.Sprintf(
+			"clock: the vault cannot establish its time and has failed closed (%s)", orDash(r.Error)))
+	}
+	if r.Outcome == model.ClockOutcomeUnreachable && prev.FailedPolls+1 >= MaxFailedPolls {
+		return raise(core.EventClockVaultUnreachable, fmt.Sprintf(
+			"unreachable: %d consecutive polls got no answer (%s)", prev.FailedPolls+1, orDash(r.Error)))
+	}
+	return VaultDecision{}
+}
+
+// cleanReading is an answer that shows nothing wrong: what a release, or
+// a vault's recovery, needs.
+func cleanReading(r model.ClockReading) bool {
+	return r.Outcome == model.ClockOutcomeOK && r.Verdict == VerdictInSync && !r.Flagged &&
+		r.TrustedMs != 0 && abs(r.DriftMs) <= Tolerance
 }

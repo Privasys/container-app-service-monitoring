@@ -154,3 +154,29 @@ type ClockEnclave struct {
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
 	UpdatedMs        int64  `json:"updated_ms"`
 }
+
+// Kinds of runtime in the platform's list. An enclave is reached through
+// its manager hostname at the gateways and can be quarantined there. A
+// vault (a member of the active vault constellation) is reached directly at
+// its own address; callers never go through a gateway to it, so it cannot
+// be quarantined, and the monitor alerts on it instead.
+const (
+	ClockKindEnclave = "enclave"
+	ClockKindVault   = "vault"
+)
+
+// ClockVaultAlert is the problem alert standing on a vault: raised when a
+// poll shows its host clock wrong or the vault silent, cleared (with a
+// recovered alert) by the next clean poll.
+type ClockVaultAlert struct {
+	EnclaveID string `json:"enclave_id"`
+	Name      string `json:"name,omitempty"`
+	// Event is the alert in force, empty when none is.
+	Event string `json:"event,omitempty"`
+	// Reason says what the reading that raised it showed.
+	Reason string `json:"reason,omitempty"`
+	// ReadingID is the reading that last changed it.
+	ReadingID string `json:"reading_id,omitempty"`
+	RaisedMs  int64  `json:"raised_ms,omitempty"`
+	UpdatedMs int64  `json:"updated_ms"`
+}

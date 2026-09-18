@@ -178,6 +178,12 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
+	return newRigFor(t, Enclave{ID: "11111111-2222-3333-4444-555555555555", Name: "m6-dev", TeeType: "tdx", MgrHostname: "m6-dev-mgr.apps.example"})
+}
+
+// newRigFor is newRig watching e.
+func newRigFor(t *testing.T, e Enclave) *rig {
+	t.Helper()
 	dir := t.TempDir()
 	material, err := keys.Load(filepath.Join(dir, "keys"))
 	if err != nil {
@@ -216,7 +222,7 @@ func newRig(t *testing.T) *rig {
 		clock:    &fakeClock{now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), ok: true},
 		platform: &fakePlatform{quarantined: map[string]string{}},
 		alerts:   make(chan core.Alert, 64),
-		enclave:  Enclave{ID: "11111111-2222-3333-4444-555555555555", Name: "m6-dev", TeeType: "tdx", MgrHostname: "m6-dev-mgr.apps.example"},
+		enclave:  e,
 	}
 	mon.SetHooks(core.Hooks{OnAlert: func(a core.Alert) { r.alerts <- a }})
 	r.platform.enclaves = []Enclave{r.enclave}

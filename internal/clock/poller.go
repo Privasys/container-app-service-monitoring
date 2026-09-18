@@ -18,7 +18,10 @@ import (
 // Polling a runtime.
 //
 // A floor goes to an enclave's manager hostname, the one route the
-// gateways keep serving while an enclave is quarantined. The connection
+// gateways keep serving while an enclave is quarantined. A vault has no
+// gateway in front of it: its floor goes straight to its own address,
+// with no server name, and its certificate and quote are checked the same
+// way. The connection
 // advertises the RA-TLS protocol marker, so the gateway splices it
 // straight through to the enclave instead of terminating it, and the
 // monitor verifies the enclave's own certificate: its chain to the
@@ -71,11 +74,28 @@ type RATLSPoller struct {
 	Timeout time.Duration
 }
 
+// pollAddress is where a floor for e goes: an enclave's manager hostname
+// on 443 (the gateway splices it through by name), or a vault's own
+// host:port with no server name (nothing routes by name in front of a
+// vault).
+func pollAddress(e Enclave) (host string, port int, serverName string, err error) {
+	if e.IsVault() {
+		if e.GatewayHost == "" || e.Port <= 0 {
+			return "", 0, "", fmt.Errorf("%w: the platform gave no address for vault %s", ErrUnreachable, e.Name)
+		}
+		return e.GatewayHost, e.Port, "", nil
+	}
+	if e.MgrHostname == "" {
+		return "", 0, "", fmt.Errorf("%w: the platform gave no manager hostname for %s", ErrUnreachable, e.Name)
+	}
+	return e.MgrHostname, 443, e.MgrHostname, nil
+}
+
 // Poll implements Poller.
 func (p *RATLSPoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*PollResult, error) {
-	host := e.MgrHostname
-	if host == "" {
-		return nil, fmt.Errorf("%w: the platform gave no manager hostname for %s", ErrUnreachable, e.Name)
+	host, port, serverName, err := pollAddress(e)
+	if err != nil {
+		return nil, err
 	}
 	server, token, err := p.Credentials(ctx)
 	if err != nil {
@@ -98,11 +118,11 @@ func (p *RATLSPoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*Po
 	// (that is a decision on time, so it fails closed). Presenting one
 	// would make exactly the runtimes that most need a poll unreachable.
 	opts := &ratls.Options{
-		ServerName:  host,
+		ServerName:  serverName,
 		Timeout:     timeout,
 		Attestation: ratls.AttestationChallenge,
 	}
-	cli, err := ratls.Connect(host, 443, opts)
+	cli, err := ratls.Connect(host, port, opts)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
 	}

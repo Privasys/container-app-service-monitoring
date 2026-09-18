@@ -529,6 +529,21 @@ var baseTables = []tableDDL{
 			updated_ms BIGINT NOT NULL
 		)`,
 	},
+	{
+		// The alert standing on each vault. A vault is never quarantined
+		// (nothing sits between its callers and it), so a clock problem on
+		// one is an alert, and the next clean poll a recovered alert.
+		name: "clock_vault_alerts",
+		ddl: `CREATE TABLE ` + "`clock_vault_alerts`" + ` (
+			enclave_id VARCHAR(96) PRIMARY KEY,
+			name VARCHAR(160) NOT NULL,
+			alert_event VARCHAR(48) NOT NULL,
+			reason VARCHAR(255) NOT NULL,
+			reading_id VARCHAR(96) NOT NULL,
+			raised_ms BIGINT NOT NULL,
+			updated_ms BIGINT NOT NULL
+		)`,
+	},
 }
 
 type tableDDL struct {

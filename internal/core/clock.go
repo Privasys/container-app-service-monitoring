@@ -33,6 +33,11 @@ const (
 	EventClockMonitorWrong    = "clock.monitor_clock_wrong"
 	EventClockTrustedTimeLost = "clock.trusted_time_lost"
 	EventClockConfigMissing   = "clock.runtime_config_missing"
+	// A vault is never quarantined: its clock problems are alerts, and
+	// the next clean poll after one is a recovered alert.
+	EventClockVaultHostClockWrong = "clock.vault_host_clock_wrong"
+	EventClockVaultUnreachable    = "clock.vault_unreachable"
+	EventClockVaultRecovered      = "clock.vault_recovered"
 )
 
 // normalisePlatformClock validates the clock part of a configure call.
@@ -423,5 +428,93 @@ func rowToClockEnclave(row store.Row) model.ClockEnclave {
 		Quarantined:   row.Bool("quarantined"),
 		QuarantinedMs: row.Int("quarantined_ms"), QuarantineReason: row.Str("quarantine_reason"),
 		UpdatedMs: row.Int("updated_ms"),
+	}
+}
+
+// RecordClockVaultAlert writes the alert standing on a vault and raises
+// event with payload, as one transaction, then hands the alert to
+// delivery. A vault is never quarantined, so this is the whole of what the
+// monitor does about a clock problem on one.
+func (m *Monitor) RecordClockVaultAlert(st model.ClockVaultAlert, event string, payload map[string]any) (*model.Transaction, error) {
+	var tr *model.Transaction
+	var alert Alert
+	now := m.Now()
+	err := m.st.Do(func(tx *store.Tx) error {
+		raised, ops, err := m.raise(tx, ClockServiceID, event, st.EnclaveID,
+			event+":"+st.EnclaveID+":"+st.ReadingID, payload, now)
+		if err != nil {
+			return err
+		}
+		ops = append(ops, model.WriteOp{
+			Table: "clock_vault_alerts", Key: map[string]any{"enclave_id": st.EnclaveID},
+			Values: map[string]any{
+				"name": clip(st.Name, 160), "alert_event": clip(st.Event, 48),
+				"reason": clip(st.Reason, 255), "reading_id": st.ReadingID,
+				"raised_ms": st.RaisedMs, "updated_ms": st.UpdatedMs,
+			},
+		})
+		verb := "Alert on the clock of vault "
+		if event == EventClockVaultRecovered {
+			verb = "Record the recovery of the clock of vault "
+		}
+		tr, err = m.commit(tx, model.Envelope{
+			Kind: model.KindAlertEmit, Service: ClockServiceID, ObjectIDs: []string{raised.ID, st.EnclaveID},
+			Author: model.SystemAuthor(), Timestamp: now,
+			Message: summarise(verb+orString(st.Name, st.EnclaveID), 72) + "\n\n" + st.Reason,
+		}, ops)
+		if err != nil {
+			return err
+		}
+		raised.LedgerRoot, raised.LedgerVersion = tx.Root()
+		alert = raised
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if m.hooks.OnAlert != nil {
+		m.hooks.OnAlert(alert)
+	}
+	return tr, nil
+}
+
+// ClockVaultAlert returns the alert standing on a vault, or nil when none
+// was ever raised on it.
+func (m *Monitor) ClockVaultAlert(enclaveID string) (*model.ClockVaultAlert, error) {
+	var out *model.ClockVaultAlert
+	err := m.st.Do(func(tx *store.Tx) error {
+		row, err := tx.QueryOne("SELECT * FROM `clock_vault_alerts` WHERE enclave_id = " + store.Lit(enclaveID))
+		if err != nil || row == nil {
+			return err
+		}
+		a := rowToClockVaultAlert(row)
+		out = &a
+		return nil
+	})
+	return out, err
+}
+
+// ClockVaultAlerts returns the alert position on every vault that ever had
+// one.
+func (m *Monitor) ClockVaultAlerts() ([]model.ClockVaultAlert, error) {
+	var out []model.ClockVaultAlert
+	err := m.st.Do(func(tx *store.Tx) error {
+		rows, err := tx.Query("SELECT * FROM `clock_vault_alerts` ORDER BY name, enclave_id")
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			out = append(out, rowToClockVaultAlert(row))
+		}
+		return nil
+	})
+	return out, err
+}
+
+func rowToClockVaultAlert(row store.Row) model.ClockVaultAlert {
+	return model.ClockVaultAlert{
+		EnclaveID: row.Str("enclave_id"), Name: row.Str("name"), Event: row.Str("alert_event"),
+		Reason: row.Str("reason"), ReadingID: row.Str("reading_id"),
+		RaisedMs: row.Int("raised_ms"), UpdatedMs: row.Int("updated_ms"),
 	}
 }

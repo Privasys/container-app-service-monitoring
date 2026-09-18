@@ -212,6 +212,7 @@ var pkColumns = map[string][]string{
 	"clock_incidents":     {"id"},
 	"clock_actions":       {"id"},
 	"clock_enclaves":      {"enclave_id"},
+	"clock_vault_alerts":  {"enclave_id"},
 }
 
 // commit runs one action: validate the envelope, write the transaction

@@ -457,6 +457,12 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	}
 
 	s.alertOnReading(prev, next, r)
+	// A vault is never quarantined (callers reach it directly, with no
+	// gateway in between): the same readings raise an alert instead.
+	if e.IsVault() {
+		s.alertOnVault(e, prev, r)
+		return &r, nil
+	}
 	// Whether the quarantine is ours is as of now: one lifted by someone
 	// else is no longer ours to keep.
 	before := prev
@@ -529,6 +535,49 @@ func (s *Service) alertOnReading(prev, next model.ClockEnclave, r model.ClockRea
 			}); err != nil {
 			s.log.Error("could not raise the missing-config alert", "error", err)
 		}
+	}
+}
+
+// alertOnVault raises the alert a vault reading calls for, if any, and
+// records the alert now standing on the vault in the same transaction.
+func (s *Service) alertOnVault(e Enclave, prev model.ClockEnclave, r model.ClockReading) {
+	var standing model.ClockVaultAlert
+	if err := s.withStore(func() error {
+		st, err := s.mon.ClockVaultAlert(e.ID)
+		if st != nil {
+			standing = *st
+		}
+		return err
+	}); err != nil {
+		s.log.Error("could not read the alert standing on a vault", "vault", e.Name, "error", err)
+		return
+	}
+	d := DecideVault(prev, r, standing.Event, s.signer.KeyID())
+	if d.Event == "" {
+		return
+	}
+	next := model.ClockVaultAlert{
+		EnclaveID: e.ID, Name: e.Name, Event: d.Event, Reason: d.Reason,
+		ReadingID: r.ID, RaisedMs: r.MonitorMs, UpdatedMs: r.MonitorMs,
+	}
+	payload := map[string]any{
+		"enclave_id": e.ID, "enclave_name": e.Name, "kind": model.ClockKindVault,
+		"address": fmt.Sprintf("%s:%d", e.GatewayHost, e.Port), "reason": d.Reason,
+		"reading_id": r.ID, "evidence": evidenceOf(r, s.signer.KeyID()),
+	}
+	if d.Event == core.EventClockVaultRecovered {
+		next.Event, next.RaisedMs = "", 0
+		payload["recovered_from"] = standing.Event
+		payload["raised_ms"] = standing.RaisedMs
+		s.log.Info("a vault's clock recovered", "vault", e.Name, "from", standing.Event)
+	} else {
+		s.log.Warn("alert on a vault's clock", "vault", e.Name, "event", d.Event, "reason", d.Reason)
+	}
+	if err := s.withStore(func() error {
+		_, err := s.mon.RecordClockVaultAlert(next, d.Event, payload)
+		return err
+	}); err != nil {
+		s.log.Error("could not record a vault clock alert", "vault", e.Name, "event", d.Event, "error", err)
 	}
 }
 
@@ -751,6 +800,12 @@ func (s *Service) PollNow(ctx context.Context, enclaveID string) (*model.ClockRe
 // FleetEnclave is one row of the fleet view.
 type FleetEnclave struct {
 	model.ClockEnclave
+	// Kind is "enclave" or "vault" as the platform lists it; empty for
+	// a runtime it no longer lists.
+	Kind string `json:"kind,omitempty"`
+	// VaultAlert is the alert standing on a vault, if one ever was
+	// raised (a vault is alerted on, never quarantined).
+	VaultAlert *model.ClockVaultAlert `json:"vault_alert,omitempty"`
 	// Listed is false for an enclave the platform no longer lists.
 	Listed bool `json:"listed"`
 	// PlatformQuarantined is the platform's own state, whoever placed it.
@@ -773,9 +828,13 @@ type Fleet struct {
 // Fleet returns the latest position on every enclave, listed or known.
 func (s *Service) Fleet() (*Fleet, error) {
 	var states []model.ClockEnclave
+	var vaultAlerts []model.ClockVaultAlert
 	err := s.withStore(func() error {
 		var err error
-		states, err = s.mon.ClockEnclaves()
+		if states, err = s.mon.ClockEnclaves(); err != nil {
+			return err
+		}
+		vaultAlerts, err = s.mon.ClockVaultAlerts()
 		return err
 	})
 	if err != nil {
@@ -794,11 +853,16 @@ func (s *Service) Fleet() (*Fleet, error) {
 	s.mu.Unlock()
 	out.TrustedTime = s.clock.Status()
 
+	alertOn := make(map[string]*model.ClockVaultAlert, len(vaultAlerts))
+	for i := range vaultAlerts {
+		alertOn[vaultAlerts[i].EnclaveID] = &vaultAlerts[i]
+	}
 	seen := map[string]bool{}
 	for _, st := range states {
-		row := FleetEnclave{ClockEnclave: st}
+		row := FleetEnclave{ClockEnclave: st, VaultAlert: alertOn[st.EnclaveID]}
 		if e, ok := listed[st.EnclaveID]; ok {
 			row.Listed, row.PlatformQuarantined, row.PlatformReason = true, e.Quarantined, e.QuarantineReason
+			row.Kind = e.KindOrDefault()
 		}
 		seen[st.EnclaveID] = true
 		out.Enclaves = append(out.Enclaves, row)
@@ -810,6 +874,7 @@ func (s *Service) Fleet() (*Fleet, error) {
 		out.Enclaves = append(out.Enclaves, FleetEnclave{
 			ClockEnclave: model.ClockEnclave{EnclaveID: id, Name: e.Name, TeeType: e.TeeType, MgrHostname: e.MgrHostname},
 			Listed:       true, PlatformQuarantined: e.Quarantined, PlatformReason: e.QuarantineReason,
+			Kind: e.KindOrDefault(),
 		})
 	}
 	if out.Enclaves == nil {

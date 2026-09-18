@@ -17,6 +17,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
 
 // The platform control plane, as the clock uses it.
@@ -29,9 +31,13 @@ import (
 // checks that this app holds the platform right the endpoint needs. No
 // token or password is configured anywhere.
 
-// Enclave is one enclave of the fleet as the control plane lists it.
+// Enclave is one runtime of the fleet as the control plane lists it: an
+// enclave (kind "enclave", or no kind from an older control plane) or a
+// member of the active vault constellation (kind "vault", reached directly
+// at GatewayHost:Port, with no manager hostname).
 type Enclave struct {
 	ID               string `json:"id"`
+	Kind             string `json:"kind,omitempty"`
 	Name             string `json:"name"`
 	TeeType          string `json:"tee_type"`
 	MgrHostname      string `json:"mgr_hostname"`
@@ -41,10 +47,27 @@ type Enclave struct {
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
 }
 
+// IsVault reports whether the runtime is a vault: polled directly at its
+// own address, and never quarantined (callers reach a vault directly, not
+// through a gateway), only alerted on.
+func (e Enclave) IsVault() bool {
+	return strings.EqualFold(e.Kind, model.ClockKindVault)
+}
+
+// KindOrDefault is the runtime's kind, "enclave" when the control plane
+// named none.
+func (e Enclave) KindOrDefault() string {
+	if e.IsVault() {
+		return model.ClockKindVault
+	}
+	return model.ClockKindEnclave
+}
+
 // IsSGX reports whether the enclave runs the SGX runtime, whose clock
-// endpoint lives on its core rather than on a manager API.
+// endpoint lives on its core rather than on a manager API. Every vault
+// does.
 func (e Enclave) IsSGX() bool {
-	return strings.EqualFold(e.TeeType, "sgx") || strings.EqualFold(e.TeeType, "mini")
+	return e.IsVault() || strings.EqualFold(e.TeeType, "sgx") || strings.EqualFold(e.TeeType, "mini")
 }
 
 // PollPath is where the enclave's runtime takes a floor.
