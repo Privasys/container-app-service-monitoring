@@ -7,19 +7,33 @@
 # provenance-free on purpose: an OCI attestation index would change the
 # manifest digest the enclave pins at OID 1.3.6.1.4.1.65230.3.2.
 
+#
+# The RA-TLS client SDK is a sibling module behind a go.mod replace. It is
+# cloned at a pinned commit so the image builds from this repository
+# alone; bump the ref together with the one in the CI workflow.
+ARG RA_TLS_CLIENTS_REF=a5c458d7601eb88ff4eec357037a9421294d8619
+
 FROM golang:1.25-alpine AS builder
+ARG RA_TLS_CLIENTS_REF
+RUN apk add --no-cache git
+RUN git clone https://github.com/Privasys/ra-tls-clients /siblings/ra-tls-clients && \
+    git -C /siblings/ra-tls-clients checkout "${RA_TLS_CLIENTS_REF}"
 
 WORKDIR /src
 
-# Dependencies first, so a source-only change does not refetch them.
+# Dependencies first, so a source-only change does not refetch them. The
+# replace path is pointed at the clone, here and again after the full
+# copy restores the original go.mod.
 COPY go.mod go.sum ./
 COPY third_party ./third_party
-RUN go mod download
+RUN sed -i 's|\.\./\.\./platform/ra-tls-clients/go|/siblings/ra-tls-clients/go|' go.mod && \
+    go mod download
 
 COPY . .
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN sed -i 's|\.\./\.\./platform/ra-tls-clients/go|/siblings/ra-tls-clients/go|' go.mod && \
+    CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
         -ldflags="-s -w -X main.version=${VERSION}" \
         -o /out/monitor ./cmd/monitor \

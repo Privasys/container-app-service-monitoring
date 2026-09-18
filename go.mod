@@ -3,6 +3,7 @@ module github.com/Privasys/container-app-service-monitoring
 go 1.25.0
 
 require (
+	enclave-os-mini/clients/go v0.0.0
 	github.com/Privasys/immutable-ledger v0.0.0-20260827160852-bf905d08811d
 	github.com/beevik/ntp v1.5.0
 	github.com/beevik/nts v0.3.2
@@ -68,6 +69,10 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 )
+
+// The RA-TLS client SDK (github.com/Privasys/ra-tls-clients, go/). CI and
+// the Dockerfile clone it at a pinned commit next to this repository.
+replace enclave-os-mini/clients/go => ../../platform/ra-tls-clients/go
 
 // A copy of siv-go without its amd64 assembly, which faults decrypting
 // some NTS replies. See third_party/siv-go/PRIVASYS.md.

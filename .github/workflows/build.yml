@@ -24,6 +24,9 @@ on:
   workflow_dispatch:
 
 env:
+  # The RA-TLS client SDK sits beside this repository (a go.mod replace).
+  # Bump it together with the ARG of the same name in the Dockerfile.
+  RA_TLS_CLIENTS_REF: a5c458d7601eb88ff4eec357037a9421294d8619
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/privasys/container-app-service-monitoring
 
@@ -36,6 +39,10 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+      - name: Fetch the RA-TLS client SDK
+        run: |
+          git clone https://github.com/Privasys/ra-tls-clients ../../platform/ra-tls-clients
+          git -C ../../platform/ra-tls-clients checkout "$RA_TLS_CLIENTS_REF"
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -60,6 +67,10 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+      - name: Fetch the RA-TLS client SDK
+        run: |
+          git clone https://github.com/Privasys/ra-tls-clients ../../platform/ra-tls-clients
+          git -C ../../platform/ra-tls-clients checkout "$RA_TLS_CLIENTS_REF"
 
       # Build-contract gate: the platform runs containers on the host
       # network and injects a unique $PORT per app; the app MUST listen
@@ -354,6 +365,10 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+      - name: Fetch the RA-TLS client SDK
+        run: |
+          git clone https://github.com/Privasys/ra-tls-clients ../../platform/ra-tls-clients
+          git -C ../../platform/ra-tls-clients checkout "$RA_TLS_CLIENTS_REF"
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
