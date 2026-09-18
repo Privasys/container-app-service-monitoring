@@ -3,7 +3,8 @@
 An optional mode in which this monitor watches the time of every enclave
 of a Privasys fleet instead of a customer's service. It is off unless a
 configure call turns it on, and a customer instance never runs it. The
-platform runs one instance per environment.
+platform runs one instance per environment, as the app
+`platform-monitoring` ("Platform monitoring").
 
 ## Why an enclave needs someone to check its clock
 
@@ -22,8 +23,13 @@ It works in both directions:
   Security servers on the internet which of the two is wrong, and if it
   is the host, the runtime freezes its time at the NTS time and flags
   itself.
-- A runtime that notices a problem between two polls reports an
-  incident to the monitor straight away, and waits for a signed receipt.
+- A runtime that sees a problem outside a poll (a host time behind its
+  floor on a read, a failed NTS fetch at boot or while flagged) reports
+  an incident to the monitor straight away; for a host behind the floor
+  it waits for a signed receipt before it goes on. Runtimes do not
+  otherwise check their host between polls: a host that blocks the
+  polls is the monitor's to catch, and it quarantines an enclave that
+  misses two polls in a row (see [Quarantine](#quarantine)).
 
 The monitor only ever triggers. Its time never becomes an enclave's
 trusted time on its own: a runtime that disagrees with the monitor asks

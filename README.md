@@ -27,6 +27,11 @@ whole record. An SLA report carries the readings its arithmetic used,
 and the verifier shipped in the same image recomputes the number rather
 than checking that somebody signed it.
 
+The same image also runs the Privasys platform's clock monitor, the
+`platform-monitoring` instance, which checks the time of every enclave
+in the fleet and has an enclave with a wrong host clock quarantined at
+the gateways. See [The platform clock](#the-platform-clock).
+
 ## What it gives you
 
 **Journeys, not pings.** A monitor is an ordered set of steps: log in,
@@ -232,10 +237,13 @@ Network Time Security servers, sends every enclave's runtime a signed
 "the time is at least T" every five minutes over an attested connection,
 records every answer in the ledger, answers the incidents runtimes
 report with a signed receipt, and asks the platform to quarantine an
-enclave whose host clock is wrong until it is fixed.
+enclave whose host clock is wrong until it is fixed. Runtimes do not
+check their host on their own between polls, so an enclave that misses
+two polls in a row is quarantined too.
 
 It is off unless a configure call turns it on, and a customer instance
-never runs it. Its key is separate from the report signing key, and
+never runs it. The platform runs it as the `platform-monitoring` app,
+one instance per environment. Its key is separate from the report signing key, and
 SHA-256 of it is published at OID `1.3.6.1.4.1.65230.5.4.3` on the
 instance that runs it. See [docs/platform-clock.md](docs/platform-clock.md).
 
@@ -248,7 +256,10 @@ itself is the thing this one exists to replace.
   Ordering is protected by the ledger's monotonic version chain and its
   lineage chain, and wall-clock claims are anchored from outside by
   delivering checkpoints to the customer, whose own receipt bounds them.
-  We do not claim trusted time.
+  The enclave runtime keeps a trusted time for its own checks (the
+  platform clock above is what it checks against), but a container reads
+  the guest's clock, so the timestamps in a customer's record are not
+  claimed as trusted time.
 - **A single vantage point cannot tell "your service is down" from "my
   network is broken."** This build observes from one place and says so;
   quorum across several is designed for and not yet built.
