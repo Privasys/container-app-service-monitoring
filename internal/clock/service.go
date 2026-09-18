@@ -83,8 +83,10 @@ type Service struct {
 	locks     map[string]*sync.Mutex
 	// lastIncidentPoll is when a report last caused a poll of each enclave.
 	lastIncidentPoll map[string]time.Time
-	incidentLimit    *rateLimit
-	seqLoaded        bool
+	// life orders shutdown against background work and the record.
+	life          lifecycle
+	incidentLimit *rateLimit
+	seqLoaded     bool
 }
 
 type credCache struct {
@@ -100,6 +102,7 @@ func NewService(mon *core.Monitor, signer *Signer, clock Clock, factory Factory,
 		Interval: DefaultInterval,
 		enclaves: map[string]Enclave{}, locks: map[string]*sync.Mutex{},
 		lastIncidentPoll: map[string]time.Time{},
+		life:             newLifecycle(),
 		incidentLimit:    newRateLimit(incidentsPerEnclave, incidentsGlobal),
 	}
 }
@@ -131,6 +134,9 @@ func (s *Service) Apply(cfg *core.PlatformClock) {
 		cancel()
 	}
 	if cfg == nil || !cfg.Enabled {
+		return
+	}
+	if s.shuttingDown() {
 		return
 	}
 
@@ -333,7 +339,7 @@ func (s *Service) checkTrustedTime() bool {
 	}
 	if !wasLost {
 		st := s.clock.Status()
-		if err := s.mon.RaiseClockAlert(core.EventClockTrustedTimeLost, "monitor",
+		if err := s.raiseAlert(core.EventClockTrustedTimeLost, "monitor",
 			"Report that the platform clock lost its trusted time",
 			map[string]any{"last_error": st.LastError, "last_fetch_ms": st.LastFetchMs}); err != nil {
 			s.log.Error("could not record the loss of trusted time", "error", err)
@@ -375,7 +381,7 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 		return nil, ErrNoTrustedTime
 	}
 	prev := model.ClockEnclave{EnclaveID: e.ID}
-	if st, err := s.mon.ClockEnclave(e.ID); err != nil {
+	if st, err := s.enclaveState(e.ID); err != nil {
 		return nil, err
 	} else if st != nil {
 		prev = *st
@@ -385,6 +391,12 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	pollCtx, cancel := context.WithTimeout(ctx, PollTimeout+10*time.Second)
 	res, err := poller.Poll(pollCtx, e, req)
 	cancel()
+	// Called off (a reconfigure, or shutdown): whatever the poll saw was
+	// cut short by us, not by the enclave, and is not recorded as if it
+	// were. It would otherwise count as a silent poll.
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	received, ok := s.clock.Now()
 	if !ok {
 		received = sent
@@ -439,7 +451,7 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	s.mu.Unlock()
 
 	next := advance(prev, e, r, s.signer.KeyID(), platformQuarantined)
-	if _, err := s.mon.RecordClockReadings([]model.ClockReading{r}, []model.ClockEnclave{next},
+	if err := s.recordReadings([]model.ClockReading{r}, []model.ClockEnclave{next},
 		readingMessage(e, r)); err != nil {
 		return &r, fmt.Errorf("clock: recording the reading: %w", err)
 	}
@@ -498,7 +510,7 @@ func readingMessage(e Enclave, r model.ClockReading) string {
 // reading.
 func (s *Service) alertOnReading(prev, next model.ClockEnclave, r model.ClockReading) {
 	if r.Outcome == model.ClockOutcomeOK && r.Verdict == VerdictMonitorWrong {
-		if err := s.mon.RaiseClockAlert(core.EventClockMonitorWrong, r.EnclaveID,
+		if err := s.raiseAlert(core.EventClockMonitorWrong, r.EnclaveID,
 			"Report that a runtime found the monitor's clock wrong", map[string]any{
 				"enclave_id": r.EnclaveID, "enclave_name": r.EnclaveName, "reading_id": r.ID,
 				"host_ms": r.HostMs, "nts_ms": r.NTSMs, "nts_servers": r.NTSServers,
@@ -508,7 +520,7 @@ func (s *Service) alertOnReading(prev, next model.ClockEnclave, r model.ClockRea
 		}
 	}
 	if next.ConfigMissing && !prev.ConfigMissing {
-		if err := s.mon.RaiseClockAlert(core.EventClockConfigMissing, r.EnclaveID,
+		if err := s.raiseAlert(core.EventClockConfigMissing, r.EnclaveID,
 			"Report a runtime missing the clock monitor's key", map[string]any{
 				"enclave_id": r.EnclaveID, "enclave_name": r.EnclaveName, "reading_id": r.ID,
 				"outcome": r.Outcome, "http_status": r.HTTPStatus,
@@ -576,7 +588,7 @@ func (s *Service) act(ctx context.Context, e Enclave, st model.ClockEnclave, r m
 	if a.Error != "" {
 		payload["error"] = a.Error
 	}
-	if _, err := s.mon.RecordClockAction(a, st, event, payload); err != nil {
+	if err := s.recordAction(a, st, event, payload); err != nil {
 		s.log.Error("could not record a clock action", "error", err)
 	}
 }
@@ -641,6 +653,9 @@ var (
 // it, and polls the enclave it names. The receipt is returned within
 // receiptBudget whatever the record is doing.
 func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAddr string) (Receipt, error) {
+	if s.shuttingDown() {
+		return Receipt{}, ErrShuttingDown
+	}
 	if !s.Enabled() {
 		return Receipt{}, errors.New("clock: the platform clock is off")
 	}
@@ -680,13 +695,15 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 	s.log.Warn("clock incident reported", "enclave", report.EnclaveID, "reason", report.Reason)
 
 	recorded := make(chan struct{})
-	go func() {
-		if _, err := s.mon.RecordClockIncident(rec); err != nil {
+	if !s.goBackground(func(bg context.Context) {
+		if err := s.recordIncident(rec); err != nil {
 			s.log.Error("could not record a clock incident", "incident", id, "error", err)
 		}
 		close(recorded)
-		s.pollAfterIncident(e, id)
-	}()
+		s.pollAfterIncident(bg, e, id)
+	}) {
+		return Receipt{}, ErrShuttingDown
+	}
 	select {
 	case <-recorded:
 	case <-time.After(receiptBudget):
@@ -698,7 +715,7 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 // pollAfterIncident polls the enclave a report names, at once, unless a
 // report already caused a poll of it in the last minute. The report
 // itself decides nothing: the poll's answer does.
-func (s *Service) pollAfterIncident(e Enclave, incidentID string) {
+func (s *Service) pollAfterIncident(bg context.Context, e Enclave, incidentID string) {
 	now := time.Now()
 	s.mu.Lock()
 	last := s.lastIncidentPoll[e.ID]
@@ -710,7 +727,7 @@ func (s *Service) pollAfterIncident(e Enclave, incidentID string) {
 	if !due {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(bg, time.Minute)
 	defer cancel()
 	if _, err := s.Poll(ctx, e, model.ClockCauseIncident, incidentID); err != nil {
 		s.log.Error("could not poll after an incident", "enclave", e.ID, "error", err)
@@ -755,7 +772,12 @@ type Fleet struct {
 
 // Fleet returns the latest position on every enclave, listed or known.
 func (s *Service) Fleet() (*Fleet, error) {
-	states, err := s.mon.ClockEnclaves()
+	var states []model.ClockEnclave
+	err := s.withStore(func() error {
+		var err error
+		states, err = s.mon.ClockEnclaves()
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

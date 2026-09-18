@@ -168,6 +168,12 @@ endpoint can write. A refused report gets no receipt: 404 for an
 enclave the monitor does not watch, 429 (with `Retry-After`) over the
 rate, 400 for a malformed report.
 
+When the monitor stops, the clock stops first: no new report is taken
+(503), the polls reports caused are cancelled and waited for, five
+seconds at most, and anything still running after that writes nothing.
+A poll cut short that way is not recorded, so it never counts against
+the enclave as a silent poll.
+
 The list is fetched as soon as the clock starts, before its first NTS
 fetch, and again at every round. A report naming an enclave the list
 does not have (one that registered since the last round) causes one

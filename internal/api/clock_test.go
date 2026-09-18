@@ -17,6 +17,7 @@ func TestARefusedIncidentHasItsOwnStatus(t *testing.T) {
 		clock.ErrTooManyIncidents:                          http.StatusTooManyRequests,
 		fmt.Errorf("wrapped: %w", clock.ErrUnknownEnclave): http.StatusNotFound,
 		errors.New("clock: nonce must be 32 bytes"):        http.StatusBadRequest,
+		clock.ErrShuttingDown:                              http.StatusServiceUnavailable,
 	} {
 		if got := incidentStatus(err); got != want {
 			t.Fatalf("%v: status %d, want %d", err, got, want)

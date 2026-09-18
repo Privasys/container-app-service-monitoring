@@ -200,11 +200,19 @@ func run(log *slog.Logger) error {
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
+	// stopped closes once everything that writes to the record has
+	// stopped. The record is closed (deferred above) only after it: the
+	// server returns from ListenAndServe as soon as shutdown begins, not
+	// when it ends.
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		clockSvc.Stop()
+		// The clock first: no new background polls, the ones in flight
+		// cancelled and waited for, and nothing it writes after this.
+		clockSvc.Shutdown()
 		_ = mon.RecordRuntimeEvent(model.EventShutdown, "the monitor is stopping")
 		if _, err := mon.IssueCheckpoint(core.ReasonScheduled); err != nil {
 			log.Error("could not anchor the state on shutdown", "error", err)
@@ -216,6 +224,7 @@ func run(log *slog.Logger) error {
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-stopped
 	return nil
 }
 

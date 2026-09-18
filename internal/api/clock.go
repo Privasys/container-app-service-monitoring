@@ -95,6 +95,8 @@ func incidentStatus(err error) int {
 		return http.StatusTooManyRequests
 	case errors.Is(err, clock.ErrUnknownEnclave):
 		return http.StatusNotFound
+	case errors.Is(err, clock.ErrShuttingDown):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusBadRequest
 	}

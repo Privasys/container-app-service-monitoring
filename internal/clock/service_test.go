@@ -125,21 +125,26 @@ type fakePoller struct {
 	answer func(req PollRequest) (*PollResult, error)
 	floors []PollRequest
 	polled chan string
+	// hold, when set, runs before the answer, with the poll's context.
+	hold func(ctx context.Context)
 }
 
-func (f *fakePoller) Poll(_ context.Context, e Enclave, req PollRequest) (*PollResult, error) {
+func (f *fakePoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*PollResult, error) {
 	if err := VerifyFloor(f.signer.PublicKey(), req); err != nil {
 		panic("the service sent a floor that does not verify: " + err.Error())
 	}
 	f.mu.Lock()
 	f.floors = append(f.floors, req)
-	answer := f.answer
+	answer, hold := f.answer, f.hold
 	f.mu.Unlock()
 	if f.polled != nil {
 		select {
 		case f.polled <- e.ID:
 		default:
 		}
+	}
+	if hold != nil {
+		hold(ctx)
 	}
 	return answer(req)
 }
@@ -832,4 +837,86 @@ func TestTheListIsFetchedBeforeTheFirstNTSRefresh(t *testing.T) {
 	l := svc.lockFor(r.enclave.ID)
 	l.Lock()
 	l.Unlock()
+}
+
+// drainPolled empties the rig's poll notifications.
+func (r *rig) drainPolled() {
+	for {
+		select {
+		case <-r.poller.polled:
+		default:
+			return
+		}
+	}
+}
+
+func TestShutdownCancelsAndWaitsForAnIncidentPoll(t *testing.T) {
+	r := newRig(t)
+	r.drainPolled()
+	r.poller.mu.Lock()
+	r.poller.hold = func(ctx context.Context) { <-ctx.Done() }
+	r.poller.mu.Unlock()
+
+	if _, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitPolled() // the incident's poll is now in flight, held
+
+	started := time.Now()
+	r.svc.Shutdown()
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("shutdown took %s; the poll's context was not cancelled", elapsed)
+	}
+	// A poll cut short by shutdown is not a silent poll of the enclave.
+	if n := r.incidentPolls(); n != 0 {
+		t.Fatalf("a poll cancelled by shutdown was recorded (%d)", n)
+	}
+	if st := r.state(); st.FailedPolls != 0 {
+		t.Fatalf("a cancelled poll counted as a failure: %+v", st)
+	}
+	// Nothing new starts once shutdown has begun.
+	if _, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("a report after shutdown got %v", err)
+	}
+	r.svc.Apply(r.mon.PlatformClockConfig())
+	if r.svc.Enabled() {
+		t.Fatal("the clock started again after shutdown")
+	}
+}
+
+func TestWorkThatOutlivesShutdownWritesNothing(t *testing.T) {
+	r := newRig(t)
+	r.drainPolled()
+	previous := shutdownWait
+	shutdownWait = 100 * time.Millisecond
+	defer func() { shutdownWait = previous }()
+
+	// A poll that ignores its context, and so outlives the wait.
+	release := make(chan struct{})
+	r.poller.mu.Lock()
+	r.poller.hold = func(context.Context) { <-release }
+	r.poller.mu.Unlock()
+	if _, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitPolled()
+	incidents, _ := r.mon.ClockIncidents(10)
+
+	started := time.Now()
+	r.svc.Shutdown()
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("shutdown waited %s, past its bound", elapsed)
+	}
+	readings, _ := r.mon.ClockReadings("", 100)
+
+	close(release)
+	r.svc.life.bg.Wait() // the straggler finishes, after shutdown
+
+	// The record is untouched by it: the store could have been closed.
+	after, _ := r.mon.ClockReadings("", 100)
+	afterIncidents, _ := r.mon.ClockIncidents(10)
+	if len(after) != len(readings) || len(afterIncidents) != len(incidents) {
+		t.Fatalf("work that outlived shutdown wrote to the record: readings %d -> %d",
+			len(readings), len(after))
+	}
 }
