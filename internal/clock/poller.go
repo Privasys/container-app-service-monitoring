@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"strings"
 	"time"
 
 	"enclave-os-mini/clients/go/ratls"
@@ -17,14 +19,18 @@ import (
 
 // Polling a runtime.
 //
-// A floor goes to an enclave's manager hostname, the one route the
-// gateways keep serving while an enclave is quarantined. A vault has no
-// gateway in front of it: its floor goes straight to its own address,
-// with no server name, and its certificate and quote are checked the same
-// way. The connection
-// advertises the RA-TLS protocol marker, so the gateway splices it
-// straight through to the enclave instead of terminating it, and the
-// monitor verifies the enclave's own certificate: its chain to the
+// A floor goes straight to the runtime's own address, the gateway_host
+// and port the control plane lists, for an enclave as for a vault. No
+// DNS name is resolved: a name the platform builds can be wrong (a
+// display name with spaces made "EU France 1-mgr.apps.privasys.org",
+// which resolves nowhere, and both prod SGX enclaves were quarantined as
+// unreachable for it), and a lookup is one more thing a host could break
+// between the monitor and its runtime. An enclave's manager hostname is
+// sent only as the TLS server name, and only when it is a valid DNS name;
+// otherwise no server name is sent at all (the virtual runtime's front
+// routes a connection with an unknown or no server name to its manager
+// API, and the SGX core serves its clock routes whatever the name). The
+// monitor verifies the runtime's own certificate: its chain to the
 // Privasys fleet, then a hardware quote obtained on the same connection
 // and bound to it, checked by the attestation server. Only then is the
 // floor sent. The reply is authentic because of that channel.
@@ -74,21 +80,41 @@ type RATLSPoller struct {
 	Timeout time.Duration
 }
 
-// pollAddress is where a floor for e goes: an enclave's manager hostname
-// on 443 (the gateway splices it through by name), or a vault's own
-// host:port with no server name (nothing routes by name in front of a
-// vault).
+// pollAddress is where a floor for e goes: the runtime's own host:port,
+// and the server name to send, if any: an enclave's manager hostname when
+// it is a valid DNS name, never for a vault (nothing routes by name in
+// front of one).
 func pollAddress(e Enclave) (host string, port int, serverName string, err error) {
-	if e.IsVault() {
-		if e.GatewayHost == "" || e.Port <= 0 {
-			return "", 0, "", fmt.Errorf("%w: the platform gave no address for vault %s", ErrUnreachable, e.Name)
+	if e.GatewayHost == "" || e.Port <= 0 {
+		return "", 0, "", fmt.Errorf("%w: the platform gave no address for %s %s", ErrUnreachable, e.KindOrDefault(), e.Name)
+	}
+	if !e.IsVault() && isDNSName(e.MgrHostname) {
+		serverName = e.MgrHostname
+	}
+	return e.GatewayHost, e.Port, serverName, nil
+}
+
+// isDNSName reports whether s is a hostname a TLS client may send as a
+// server name: dot-separated labels of 1 to 63 letters, digits or
+// hyphens, none starting or ending with a hyphen, at most 253 bytes, and
+// not an IP address.
+func isDNSName(s string) bool {
+	s = strings.TrimSuffix(s, ".")
+	if s == "" || len(s) > 253 || net.ParseIP(s) != nil {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
 		}
-		return e.GatewayHost, e.Port, "", nil
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
 	}
-	if e.MgrHostname == "" {
-		return "", 0, "", fmt.Errorf("%w: the platform gave no manager hostname for %s", ErrUnreachable, e.Name)
-	}
-	return e.MgrHostname, 443, e.MgrHostname, nil
+	return true
 }
 
 // Poll implements Poller.
@@ -151,7 +177,11 @@ func (p *RATLSPoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*Po
 	}
 	_ = cli.Conn().SetDeadline(time.Now().Add(timeout))
 	started := time.Now()
-	resp, err := cli.HTTPDo("POST", e.PollPath(), host, body, "")
+	hostHeader := serverName
+	if hostHeader == "" {
+		hostHeader = host
+	}
+	resp, err := cli.HTTPDo("POST", e.PollPath(), hostHeader, body, "")
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
 	}

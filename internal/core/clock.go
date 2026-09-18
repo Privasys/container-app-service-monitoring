@@ -38,7 +38,25 @@ const (
 	EventClockVaultHostClockWrong = "clock.vault_host_clock_wrong"
 	EventClockVaultUnreachable    = "clock.vault_unreachable"
 	EventClockVaultRecovered      = "clock.vault_recovered"
+	// An enclave whose runtime has not acknowledged the current clock
+	// config is never quarantined either: what would quarantine one that
+	// holds it raises these instead, once per change. Recovered is raised
+	// by the next clean poll, or when the runtime acknowledges the config
+	// (from then on it is held to the clock like any other).
+	EventClockUnconfiguredClockWrong  = "clock.unconfigured_clock_wrong"
+	EventClockUnconfiguredUnreachable = "clock.unconfigured_unreachable"
+	EventClockUnconfiguredRecovered   = "clock.unconfigured_recovered"
 )
+
+// clockAlertSubject names the runtime an alert standing in
+// clock_vault_alerts is about: a vault, or an enclave that does not hold
+// the clock config.
+func clockAlertSubject(event string) string {
+	if strings.HasPrefix(event, "clock.unconfigured_") {
+		return "enclave "
+	}
+	return "vault "
+}
 
 // normalisePlatformClock validates the clock part of a configure call.
 // The clock's alerts go to the configure call's callback unless the
@@ -431,10 +449,11 @@ func rowToClockEnclave(row store.Row) model.ClockEnclave {
 	}
 }
 
-// RecordClockVaultAlert writes the alert standing on a vault and raises
-// event with payload, as one transaction, then hands the alert to
-// delivery. A vault is never quarantined, so this is the whole of what the
-// monitor does about a clock problem on one.
+// RecordClockVaultAlert writes the alert standing on a vault, or on an
+// enclave whose runtime does not hold the clock config, and raises event
+// with payload, as one transaction, then hands the alert to delivery.
+// Neither is ever quarantined, so this is the whole of what the monitor
+// does about a clock problem on one.
 func (m *Monitor) RecordClockVaultAlert(st model.ClockVaultAlert, event string, payload map[string]any) (*model.Transaction, error) {
 	var tr *model.Transaction
 	var alert Alert
@@ -453,9 +472,9 @@ func (m *Monitor) RecordClockVaultAlert(st model.ClockVaultAlert, event string, 
 				"raised_ms": st.RaisedMs, "updated_ms": st.UpdatedMs,
 			},
 		})
-		verb := "Alert on the clock of vault "
-		if event == EventClockVaultRecovered {
-			verb = "Record the recovery of the clock of vault "
+		verb := "Alert on the clock of " + clockAlertSubject(event)
+		if event == EventClockVaultRecovered || event == EventClockUnconfiguredRecovered {
+			verb = "Record the recovery of the clock of " + clockAlertSubject(event)
 		}
 		tr, err = m.commit(tx, model.Envelope{
 			Kind: model.KindAlertEmit, Service: ClockServiceID, ObjectIDs: []string{raised.ID, st.EnclaveID},

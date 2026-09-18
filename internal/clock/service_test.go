@@ -178,7 +178,15 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	return newRigFor(t, Enclave{ID: "11111111-2222-3333-4444-555555555555", Name: "m6-dev", TeeType: "tdx", MgrHostname: "m6-dev-mgr.apps.example"})
+	return newRigFor(t, armed(Enclave{ID: "11111111-2222-3333-4444-555555555555", Name: "m6-dev", TeeType: "tdx",
+		MgrHostname: "m6-dev-mgr.apps.example", GatewayHost: "192.0.2.6", Port: 443}))
+}
+
+// armed is e as a control plane lists a runtime that acknowledged the
+// current clock config (version 2).
+func armed(e Enclave) Enclave {
+	e.ClockConfigVersion, e.ClockConfigCurrent, e.ClockConfigKnown = 2, 2, true
+	return e
 }
 
 // newRigFor is newRig watching e.

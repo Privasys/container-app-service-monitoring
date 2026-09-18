@@ -101,8 +101,8 @@ joined with `\n`, with no trailing newline.
 
 **Floor**, monitor to runtime, `POST /api/v1/clock/poll` on the
 enclave-os-virtual manager and `POST /clock/poll` on the enclave-os-mini
-core, reached through the enclave's manager hostname (a vault's core
-directly at its own address, see [Vaults](#vaults)):
+core, reached directly at the runtime's own address (see
+[Polling over RA-TLS](#polling-over-ra-tls)):
 
 ```json
 { "enclave_id": "…", "t_ms": 1789000000000, "seq": 42, "key_id": "…", "sig": "…" }
@@ -140,11 +140,19 @@ as the runtime sent it), `incident_id`.
 
 ## Polling over RA-TLS
 
-A floor goes to the enclave's manager hostname, the one route the
-gateways keep serving while an enclave is quarantined. The connection
-advertises the RA-TLS protocol marker, so the gateway splices it
-straight through to the enclave rather than terminating it. Before the
-floor is sent, the monitor verifies what answered:
+A floor goes straight to the runtime's own address, the `gateway_host`
+and `port` the platform lists, for an enclave as for a vault. No DNS
+name is ever resolved: a name the platform builds can be wrong (an
+enclave named "EU France 1" once had the manager hostname
+"EU France 1-mgr.apps.privasys.org", which resolves nowhere), and a
+lookup is one more thing between the monitor and the runtime. The
+enclave's manager hostname is sent only as the TLS server name, and only
+when it is a valid DNS name; otherwise no server name is sent. Both
+runtimes answer either way: the virtual runtime's front routes a
+connection with an unknown or no server name to its manager API, and
+the SGX core serves its clock routes whatever the name. The connection
+advertises the RA-TLS protocol marker. Before the floor is sent, the
+monitor verifies what answered:
 
 1. the certificate chains to the Privasys fleet;
 2. a hardware quote is requested on the same connection, bound to it
@@ -156,12 +164,8 @@ floor is sent, the monitor verifies what answered:
 A runtime whose evidence does not verify is recorded as `unverified`,
 and nothing it said is used.
 
-A vault is polled the same way, except for where the connection goes:
-nothing routes by name in front of a vault, so the monitor connects to
-the vault's own address as the platform lists it (`gateway_host` and
-`port`), with no server name, and sends the floor to the core's
-`POST /clock/poll`. The certificate chain, the quote bound to the
-connection and its verification by the attestation server are the same.
+A vault is polled the same way, never with a server name (it has no
+manager hostname), on the core's `POST /clock/poll`.
 
 ## Incidents
 
@@ -204,8 +208,18 @@ terminating proxy would add.
 
 A quarantine asks the platform to stop serving an enclave's apps at the
 gateways, so users are not handed answers computed on a wrong or frozen
-clock. The enclave keeps running and its manager route stays up, so the
-monitor can keep checking it. These quarantine:
+clock. The enclave keeps running and stays reachable at its own address,
+so the monitor can keep checking it.
+
+Only an enclave whose runtime acknowledged the current clock config is
+ever quarantined: the platform lists, for each runtime, the config
+version it acknowledged (`clock_config_version`, 0 for never) and the
+version now set (`clock_config_current_version`). A runtime that has
+not taken the current config (a build without the clock routes, or one
+the platform's push has not reached yet) has no clock to be wrong and
+cannot answer a floor, so the findings below raise an alert on it
+instead (see [Enclaves without the clock](#enclaves-without-the-clock)).
+For an enclave that holds it, these quarantine:
 
 - the runtime's verdict is `host_clock_wrong`;
 - the runtime answers flagged, serving a frozen time;
@@ -240,6 +254,33 @@ Not a clock problem, and never quarantined for on its own:
   is to push the monitor's configuration to the runtimes again;
 - a runtime found the monitor's clock wrong (`monitor_clock_wrong`).
   That is the monitor's problem, and it is alerted on as such.
+
+## Enclaves without the clock
+
+An enclave whose runtime has not acknowledged the current clock config
+is never quarantined. The findings that would quarantine one that holds
+it raise an alert instead, once per change, and end with a recovered
+alert:
+
+- `clock.unconfigured_clock_wrong`: an answer showing a clock problem,
+  or a runtime failing closed;
+- `clock.unconfigured_unreachable`: two polls in a row with no answer;
+- `clock.unconfigured_recovered`: a clean poll after one of the two
+  above, or the runtime acknowledging the current config (from then on
+  it is held to the clock like any other enclave).
+
+A runtime without the clock routes answers the poll with 404: that is
+recorded, and alerted on by neither rule. A quarantine the monitor
+itself placed on a runtime that never acknowledged any config (placed
+before this rule existed, or before the enclave registered again) is
+lifted at the next poll. A platform too old to list the versions arms
+nothing: nothing is quarantined, and nothing is lifted.
+
+On 2026-09-18 two prod SGX enclaves, on a runtime without the clock and
+named with spaces, were quarantined as unreachable for about an hour:
+their polls went to a manager hostname that resolved nowhere. Either
+rule, polling the runtime's own address or quarantining only runtimes
+that hold the clock config, would have kept them in service.
 
 ## Vaults
 
@@ -284,6 +325,9 @@ coordinates of the change, to the clock's callback:
 | `clock.vault_host_clock_wrong` | a vault's host clock is wrong, its time frozen, or it has none |
 | `clock.vault_unreachable` | a vault gave no answer to two polls in a row |
 | `clock.vault_recovered` | a clean poll after one of the two above |
+| `clock.unconfigured_clock_wrong` | an enclave without the current clock config answered with a clock problem |
+| `clock.unconfigured_unreachable` | an enclave without the current clock config gave no answer to two polls in a row |
+| `clock.unconfigured_recovered` | a clean poll after one of the two above, or the enclave took the config |
 
 ## The record
 
@@ -294,7 +338,8 @@ flag, verdict and NTS time, and the drift), `clock_incidents` (reports
 as received), `clock_actions` (every quarantine and release asked for,
 with its evidence and the platform's answer), `clock_enclaves` (the
 current position on each enclave and vault) and `clock_vault_alerts` (the
-alert standing on each vault). Each vault alert is written in the same
+alert standing on each vault, and on each enclave from while it did not
+hold the clock config). Each standing alert is written in the same
 transaction as the alert it raises.
 
 ## Endpoints
@@ -303,7 +348,7 @@ transaction as the alert it raises.
 | --- | --- | --- |
 | `GET /api/v1/clock/key` | anyone | the clock key |
 | `POST /api/v1/clock/incidents` | anyone | report an incident, get a receipt |
-| `GET /api/v1/clock/fleet` | explorer | the fleet view: every enclave's and vault's latest reading, drift, `kind`, quarantine (enclaves) or `vault_alert` (vaults), and the monitor's own time |
+| `GET /api/v1/clock/fleet` | explorer | the fleet view: every enclave's and vault's latest reading, drift, `kind`, `clock_config_version` and `clock_armed`, quarantine or `unconfigured_alert` (enclaves) or `vault_alert` (vaults), and the monitor's own time |
 | `GET /api/v1/clock/readings?enclave=&limit=` | explorer | readings, newest first |
 | `GET /api/v1/clock/incidents?limit=` | explorer | incident reports, newest first |
 | `GET /api/v1/clock/actions?limit=` | explorer | quarantines and releases, newest first |

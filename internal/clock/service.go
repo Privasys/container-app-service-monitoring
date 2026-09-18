@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -447,6 +448,10 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	s.mu.Lock()
 	if known, ok := s.enclaves[e.ID]; ok {
 		platformQuarantined = known.Quarantined
+		// The latest list says whether the runtime holds the clock config
+		// now, whatever the list e came from said.
+		e.ClockConfigVersion, e.ClockConfigCurrent, e.ClockConfigKnown =
+			known.ClockConfigVersion, known.ClockConfigCurrent, known.ClockConfigKnown
 	}
 	s.mu.Unlock()
 
@@ -460,9 +465,23 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	// A vault is never quarantined (callers reach it directly, with no
 	// gateway in between): the same readings raise an alert instead.
 	if e.IsVault() {
-		s.alertOnVault(e, prev, r)
+		s.alertOnVault(e, prev, r, DecideVault)
 		return &r, nil
 	}
+	// Nor is an enclave whose runtime has not acknowledged the current
+	// clock config: it has no clock to hold it to.
+	if !e.ClockArmed() {
+		s.alertOnVault(e, prev, r, DecideUnconfigured)
+		// A quarantine of ours on a runtime that never took any config is
+		// one this rule would not have placed: lift it.
+		if next.Quarantined && platformQuarantined && e.ClockNeverConfigured() {
+			s.act(ctx, e, next, r, Decision{Op: model.ClockOpRelease, Reason: fmt.Sprintf(
+				"clock: the runtime has never acknowledged the clock config (current version %d), "+
+					"so the monitor does not hold it to the clock", e.ClockConfigCurrent)})
+		}
+		return &r, nil
+	}
+	s.clearUnconfiguredAlert(e, r)
 	// Whether the quarantine is ours is as of now: one lifted by someone
 	// else is no longer ours to keep.
 	before := prev
@@ -471,6 +490,43 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 		s.act(ctx, e, next, r, d)
 	}
 	return &r, nil
+}
+
+// clearUnconfiguredAlert ends an alert that stands on an enclave from
+// before its runtime acknowledged the clock config, with one recovered
+// alert: from now on the enclave is held to the clock like any other.
+func (s *Service) clearUnconfiguredAlert(e Enclave, r model.ClockReading) {
+	var standing *model.ClockVaultAlert
+	if err := s.withStore(func() error {
+		var err error
+		standing, err = s.mon.ClockVaultAlert(e.ID)
+		return err
+	}); err != nil {
+		s.log.Error("could not read the alert standing on an enclave", "enclave", e.Name, "error", err)
+		return
+	}
+	if standing == nil || !strings.HasPrefix(standing.Event, "clock.unconfigured_") ||
+		standing.Event == core.EventClockUnconfiguredRecovered {
+		return
+	}
+	reason := fmt.Sprintf("clock: the runtime acknowledged the clock config (version %d); "+
+		"the monitor now holds it to the clock", e.ClockConfigVersion)
+	next := model.ClockVaultAlert{
+		EnclaveID: e.ID, Name: e.Name, Reason: reason, ReadingID: r.ID, UpdatedMs: r.MonitorMs,
+	}
+	payload := map[string]any{
+		"enclave_id": e.ID, "enclave_name": e.Name, "kind": model.ClockKindEnclave,
+		"reason": reason, "reading_id": r.ID, "recovered_from": standing.Event,
+		"raised_ms": standing.RaisedMs, "clock_config_version": e.ClockConfigVersion,
+		"evidence": evidenceOf(r, s.signer.KeyID()),
+	}
+	s.log.Info("an enclave now holds the clock config", "enclave", e.Name, "from", standing.Event)
+	if err := s.withStore(func() error {
+		_, err := s.mon.RecordClockVaultAlert(next, core.EventClockUnconfiguredRecovered, payload)
+		return err
+	}); err != nil {
+		s.log.Error("could not record the end of an alert", "enclave", e.Name, "error", err)
+	}
 }
 
 // advance computes the enclave's position after a reading.
@@ -538,9 +594,12 @@ func (s *Service) alertOnReading(prev, next model.ClockEnclave, r model.ClockRea
 	}
 }
 
-// alertOnVault raises the alert a vault reading calls for, if any, and
-// records the alert now standing on the vault in the same transaction.
-func (s *Service) alertOnVault(e Enclave, prev model.ClockEnclave, r model.ClockReading) {
+// alertOnVault raises the alert a reading calls for, if any, on a runtime
+// that is alerted on instead of quarantined (a vault, or an enclave that
+// does not hold the clock config), and records the alert now standing on
+// it in the same transaction.
+func (s *Service) alertOnVault(e Enclave, prev model.ClockEnclave, r model.ClockReading,
+	decide func(prev model.ClockEnclave, r model.ClockReading, standing, keyID string) VaultDecision) {
 	var standing model.ClockVaultAlert
 	if err := s.withStore(func() error {
 		st, err := s.mon.ClockVaultAlert(e.ID)
@@ -549,10 +608,10 @@ func (s *Service) alertOnVault(e Enclave, prev model.ClockEnclave, r model.Clock
 		}
 		return err
 	}); err != nil {
-		s.log.Error("could not read the alert standing on a vault", "vault", e.Name, "error", err)
+		s.log.Error("could not read the alert standing on a runtime", "runtime", e.Name, "error", err)
 		return
 	}
-	d := DecideVault(prev, r, standing.Event, s.signer.KeyID())
+	d := decide(prev, r, standing.Event, s.signer.KeyID())
 	if d.Event == "" {
 		return
 	}
@@ -561,23 +620,30 @@ func (s *Service) alertOnVault(e Enclave, prev model.ClockEnclave, r model.Clock
 		ReadingID: r.ID, RaisedMs: r.MonitorMs, UpdatedMs: r.MonitorMs,
 	}
 	payload := map[string]any{
-		"enclave_id": e.ID, "enclave_name": e.Name, "kind": model.ClockKindVault,
+		"enclave_id": e.ID, "enclave_name": e.Name, "kind": e.KindOrDefault(),
 		"address": fmt.Sprintf("%s:%d", e.GatewayHost, e.Port), "reason": d.Reason,
 		"reading_id": r.ID, "evidence": evidenceOf(r, s.signer.KeyID()),
 	}
-	if d.Event == core.EventClockVaultRecovered {
+	if !e.IsVault() {
+		payload["clock_config_version"] = e.ClockConfigVersion
+		payload["clock_config_current_version"] = e.ClockConfigCurrent
+		payload["quarantined"] = false
+		payload["why_not_quarantined"] = "the runtime has not acknowledged the current clock config"
+	}
+	if d.Event == core.EventClockVaultRecovered || d.Event == core.EventClockUnconfiguredRecovered {
 		next.Event, next.RaisedMs = "", 0
 		payload["recovered_from"] = standing.Event
 		payload["raised_ms"] = standing.RaisedMs
-		s.log.Info("a vault's clock recovered", "vault", e.Name, "from", standing.Event)
+		s.log.Info("a runtime's clock recovered", "runtime", e.Name, "kind", e.KindOrDefault(), "from", standing.Event)
 	} else {
-		s.log.Warn("alert on a vault's clock", "vault", e.Name, "event", d.Event, "reason", d.Reason)
+		s.log.Warn("alert on a runtime's clock", "runtime", e.Name, "kind", e.KindOrDefault(),
+			"event", d.Event, "reason", d.Reason)
 	}
 	if err := s.withStore(func() error {
 		_, err := s.mon.RecordClockVaultAlert(next, d.Event, payload)
 		return err
 	}); err != nil {
-		s.log.Error("could not record a vault clock alert", "vault", e.Name, "event", d.Event, "error", err)
+		s.log.Error("could not record a clock alert", "runtime", e.Name, "event", d.Event, "error", err)
 	}
 }
 
@@ -806,6 +872,14 @@ type FleetEnclave struct {
 	// VaultAlert is the alert standing on a vault, if one ever was
 	// raised (a vault is alerted on, never quarantined).
 	VaultAlert *model.ClockVaultAlert `json:"vault_alert,omitempty"`
+	// UnconfiguredAlert is the alert standing on an enclave from while its
+	// runtime did not hold the clock config, if one ever was raised.
+	UnconfiguredAlert *model.ClockVaultAlert `json:"unconfigured_alert,omitempty"`
+	// ClockConfigVersion is the clock config version the runtime
+	// acknowledged, as the platform lists it, and ClockArmed whether that
+	// is the current one: only then may the monitor quarantine it.
+	ClockConfigVersion int64 `json:"clock_config_version"`
+	ClockArmed         bool  `json:"clock_armed"`
 	// Listed is false for an enclave the platform no longer lists.
 	Listed bool `json:"listed"`
 	// PlatformQuarantined is the platform's own state, whoever placed it.
@@ -858,11 +932,29 @@ func (s *Service) Fleet() (*Fleet, error) {
 		alertOn[vaultAlerts[i].EnclaveID] = &vaultAlerts[i]
 	}
 	seen := map[string]bool{}
+	withListing := func(row FleetEnclave, e Enclave) FleetEnclave {
+		row.Listed, row.PlatformQuarantined, row.PlatformReason = true, e.Quarantined, e.QuarantineReason
+		row.Kind = e.KindOrDefault()
+		row.ClockConfigVersion = e.ClockConfigVersion
+		row.ClockArmed = !e.IsVault() && e.ClockArmed()
+		return row
+	}
 	for _, st := range states {
-		row := FleetEnclave{ClockEnclave: st, VaultAlert: alertOn[st.EnclaveID]}
-		if e, ok := listed[st.EnclaveID]; ok {
-			row.Listed, row.PlatformQuarantined, row.PlatformReason = true, e.Quarantined, e.QuarantineReason
-			row.Kind = e.KindOrDefault()
+		row := FleetEnclave{ClockEnclave: st}
+		e, ok := listed[st.EnclaveID]
+		if ok {
+			row = withListing(row, e)
+		}
+		if a := alertOn[st.EnclaveID]; a != nil {
+			// A recovered alert stands with no event: the kind says whose
+			// it is, and the event only for a runtime no longer listed.
+			vault := row.Kind == model.ClockKindVault ||
+				(row.Kind == "" && !strings.HasPrefix(a.Event, "clock.unconfigured_"))
+			if !vault {
+				row.UnconfiguredAlert = a
+			} else {
+				row.VaultAlert = a
+			}
 		}
 		seen[st.EnclaveID] = true
 		out.Enclaves = append(out.Enclaves, row)
@@ -871,11 +963,9 @@ func (s *Service) Fleet() (*Fleet, error) {
 		if seen[id] {
 			continue
 		}
-		out.Enclaves = append(out.Enclaves, FleetEnclave{
+		out.Enclaves = append(out.Enclaves, withListing(FleetEnclave{
 			ClockEnclave: model.ClockEnclave{EnclaveID: id, Name: e.Name, TeeType: e.TeeType, MgrHostname: e.MgrHostname},
-			Listed:       true, PlatformQuarantined: e.Quarantined, PlatformReason: e.QuarantineReason,
-			Kind: e.KindOrDefault(),
-		})
+		}, e))
 	}
 	if out.Enclaves == nil {
 		out.Enclaves = []FleetEnclave{}

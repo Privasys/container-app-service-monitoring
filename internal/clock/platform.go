@@ -33,18 +33,45 @@ import (
 
 // Enclave is one runtime of the fleet as the control plane lists it: an
 // enclave (kind "enclave", or no kind from an older control plane) or a
-// member of the active vault constellation (kind "vault", reached directly
-// at GatewayHost:Port, with no manager hostname).
+// member of the active vault constellation (kind "vault", with no manager
+// hostname). Every runtime is reached directly at GatewayHost:Port.
 type Enclave struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind,omitempty"`
-	Name             string `json:"name"`
-	TeeType          string `json:"tee_type"`
-	MgrHostname      string `json:"mgr_hostname"`
-	GatewayHost      string `json:"gateway_host"`
-	Port             int    `json:"port"`
-	Quarantined      bool   `json:"quarantined"`
-	QuarantineReason string `json:"quarantine_reason,omitempty"`
+	ID          string `json:"id"`
+	Kind        string `json:"kind,omitempty"`
+	Name        string `json:"name"`
+	TeeType     string `json:"tee_type"`
+	MgrHostname string `json:"mgr_hostname"`
+	GatewayHost string `json:"gateway_host"`
+	Port        int    `json:"port"`
+	// ClockConfigVersion is the clock config version the runtime
+	// acknowledged to the control plane (0: never).
+	ClockConfigVersion int64  `json:"clock_config_version"`
+	Quarantined        bool   `json:"quarantined"`
+	QuarantineReason   string `json:"quarantine_reason,omitempty"`
+
+	// ClockConfigCurrent is the version of the clock config the control
+	// plane has set now, from the list this entry came in, and
+	// ClockConfigKnown whether that list said at all (a control plane
+	// older than the field does not).
+	ClockConfigCurrent int64 `json:"-"`
+	ClockConfigKnown   bool  `json:"-"`
+}
+
+// ClockArmed reports whether the runtime acknowledged the current clock
+// config, so it holds this monitor's key and runs the clock: the only
+// runtimes the monitor may quarantine. One that never took the config (a
+// build without the clock routes, or one the push has not reached) has
+// no clock to be wrong, and cannot answer a poll: holding it to the clock
+// would take it out of service for being what it is. A list that does
+// not say (an older control plane) arms nothing.
+func (e Enclave) ClockArmed() bool {
+	return e.ClockConfigKnown && e.ClockConfigCurrent > 0 && e.ClockConfigVersion >= e.ClockConfigCurrent
+}
+
+// ClockNeverConfigured reports whether the control plane says the runtime
+// never acknowledged any clock config.
+func (e Enclave) ClockNeverConfigured() bool {
+	return e.ClockConfigKnown && e.ClockConfigVersion == 0
 }
 
 // IsVault reports whether the runtime is a vault: polled directly at its
@@ -163,13 +190,21 @@ func (p *Platform) do(ctx context.Context, method, path string, body any, out an
 	return resp.StatusCode, nil
 }
 
-// Enclaves lists the active enclaves.
+// Enclaves lists the active enclaves, each stamped with the current clock
+// config version the list carries.
 func (p *Platform) Enclaves(ctx context.Context) ([]Enclave, error) {
 	var out struct {
+		Current  *int64    `json:"clock_config_current_version"`
 		Enclaves []Enclave `json:"enclaves"`
 	}
 	if _, err := p.do(ctx, http.MethodGet, "/api/v1/platform/enclaves", nil, &out); err != nil {
 		return nil, err
+	}
+	if out.Current != nil {
+		for i := range out.Enclaves {
+			out.Enclaves[i].ClockConfigCurrent = *out.Current
+			out.Enclaves[i].ClockConfigKnown = true
+		}
 	}
 	return out.Enclaves, nil
 }

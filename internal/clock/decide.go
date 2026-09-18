@@ -42,6 +42,17 @@ import (
 //
 // A runtime that does not hold this monitor's key is not a clock
 // problem. It is reported, and never quarantined for on its own.
+//
+// Only a runtime that acknowledged the current clock config to the
+// control plane is quarantined at all (Enclave.ClockArmed). One that
+// never took it (a build without the clock routes, or one the push has
+// not reached yet) has no clock to be wrong and cannot answer a floor:
+// the same readings raise an alert on it instead, like a vault, and a
+// quarantine of this monitor's own that stands on a runtime that never
+// acknowledged any config is lifted. On 2026-09-18 two prod enclaves on a
+// runtime without the clock were quarantined as "unreachable" for an hour
+// because their polls went to a hostname that did not resolve; this rule
+// alone would have kept them in service.
 
 // MaxFailedPolls is how many polls in a row may get no answer before the
 // enclave is quarantined, whatever it said before. A host can keep the
@@ -195,16 +206,45 @@ func orDash(s string) string {
 // An alert is raised on the change, not on every reading: the same
 // problem again raises nothing, a different one raises its own alert.
 
-// VaultDecision is what a vault reading calls for.
+// VaultDecision is what a vault reading, or the reading of an enclave
+// that does not hold the clock config, calls for.
 type VaultDecision struct {
 	// Event is the alert to raise, or empty.
 	Event  string
 	Reason string
 }
 
+// alertEvents names the alerts of one kind of runtime that is alerted on
+// instead of quarantined.
+type alertEvents struct {
+	what                          string // "vault", "runtime"
+	clockWrong, unreachable, back string
+}
+
+var (
+	vaultEvents = alertEvents{what: "vault",
+		clockWrong: core.EventClockVaultHostClockWrong, unreachable: core.EventClockVaultUnreachable,
+		back: core.EventClockVaultRecovered}
+	unconfiguredEvents = alertEvents{what: "runtime",
+		clockWrong: core.EventClockUnconfiguredClockWrong, unreachable: core.EventClockUnconfiguredUnreachable,
+		back: core.EventClockUnconfiguredRecovered}
+)
+
 // DecideVault applies the vault rules to one reading. prev is the position
 // before it; standing is the alert in force on the vault ("" for none).
 func DecideVault(prev model.ClockEnclave, r model.ClockReading, standing, keyID string) VaultDecision {
+	return decideAlert(vaultEvents, prev, r, standing, keyID)
+}
+
+// DecideUnconfigured applies the same rules to an enclave whose runtime
+// has not acknowledged the current clock config: what would quarantine an
+// enclave that holds it raises an alert, once per change. A 404 (a runtime
+// without the clock routes) and a refusal of the key raise nothing.
+func DecideUnconfigured(prev model.ClockEnclave, r model.ClockReading, standing, keyID string) VaultDecision {
+	return decideAlert(unconfiguredEvents, prev, r, standing, keyID)
+}
+
+func decideAlert(ev alertEvents, prev model.ClockEnclave, r model.ClockReading, standing, keyID string) VaultDecision {
 	raise := func(event, reason string) VaultDecision {
 		if event == standing {
 			return VaultDecision{}
@@ -213,12 +253,12 @@ func DecideVault(prev model.ClockEnclave, r model.ClockReading, standing, keyID 
 	}
 	if r.Outcome == model.ClockOutcomeOK {
 		if reason := clockProblem(r); reason != "" {
-			return raise(core.EventClockVaultHostClockWrong, reason)
+			return raise(ev.clockWrong, reason)
 		}
 		if standing != "" && cleanReading(r) {
-			return VaultDecision{Event: core.EventClockVaultRecovered, Reason: fmt.Sprintf(
-				"clock: the vault's host clock is back in sync (drift %s, verdict in_sync, not flagged)",
-				fmtMs(r.DriftMs))}
+			return VaultDecision{Event: ev.back, Reason: fmt.Sprintf(
+				"clock: the %s's host clock is back in sync (drift %s, verdict in_sync, not flagged)",
+				ev.what, fmtMs(r.DriftMs))}
 		}
 		return VaultDecision{}
 	}
@@ -226,11 +266,11 @@ func DecideVault(prev model.ClockEnclave, r model.ClockReading, standing, keyID 
 		return VaultDecision{}
 	}
 	if failedClosed(r) {
-		return raise(core.EventClockVaultHostClockWrong, fmt.Sprintf(
-			"clock: the vault cannot establish its time and has failed closed (%s)", orDash(r.Error)))
+		return raise(ev.clockWrong, fmt.Sprintf(
+			"clock: the %s cannot establish its time and has failed closed (%s)", ev.what, orDash(r.Error)))
 	}
 	if r.Outcome == model.ClockOutcomeUnreachable && prev.FailedPolls+1 >= MaxFailedPolls {
-		return raise(core.EventClockVaultUnreachable, fmt.Sprintf(
+		return raise(ev.unreachable, fmt.Sprintf(
 			"unreachable: %d consecutive polls got no answer (%s)", prev.FailedPolls+1, orDash(r.Error)))
 	}
 	return VaultDecision{}

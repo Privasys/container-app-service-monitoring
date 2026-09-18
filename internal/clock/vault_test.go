@@ -187,7 +187,7 @@ func TestAVaultIsPolledAtItsOwnAddress(t *testing.T) {
 	}
 	e := Enclave{Name: "m6-dev", TeeType: "tdx", MgrHostname: "m6-dev-mgr.apps.example", GatewayHost: "10.0.0.1", Port: 443}
 	host, port, sni, err = pollAddress(e)
-	if err != nil || host != e.MgrHostname || port != 443 || sni != e.MgrHostname {
+	if err != nil || host != "10.0.0.1" || port != 443 || sni != e.MgrHostname {
 		t.Fatalf("enclave address %s:%d sni %q, %v", host, port, sni, err)
 	}
 	v := testVault()
