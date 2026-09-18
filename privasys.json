@@ -75,6 +75,28 @@
                         "x-privasys": {
                             "label": "Renderer measurement"
                         }
+                    },
+                    "platform_clock": {
+                        "type": "object",
+                        "description": "Run this instance as the platform clock: watch the time of every enclave of a Privasys fleet, send them signed floors, and ask the platform to quarantine an enclave whose host clock is wrong. Only the platform's own instance sets this; the instance must hold the platform rights it needs.",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean",
+                                "description": "Turn the platform clock on."
+                            },
+                            "management_url": {
+                                "type": "string",
+                                "description": "The platform control plane the enclaves are listed from and quarantines are asked of."
+                            },
+                            "callback_url": {
+                                "type": "string",
+                                "description": "Where the clock's alerts are delivered. Defaults to callback_url."
+                            },
+                            "allow_debug_images": {
+                                "type": "boolean",
+                                "description": "Accept runtimes on development images. Leave off for a production fleet."
+                            }
+                        }
                     }
                 },
                 "required": [

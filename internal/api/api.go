@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
+	"github.com/Privasys/container-app-service-monitoring/internal/clock"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 )
@@ -65,6 +66,9 @@ type Server struct {
 	Manifest []byte
 	// PackDir is where the service-model packs baked into the image live.
 	PackDir string
+	// Clock is the platform clock. It is present on every instance and
+	// switched on only by a configure call that asks for it.
+	Clock *clock.Service
 }
 
 // NewServer builds the surface.
@@ -201,6 +205,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /tools/report", s.wrap(s.generateReport))
 	mux.HandleFunc("POST /tools/checkpoint", s.wrap(s.issueCheckpoint))
 	mux.HandleFunc("POST /tools/approve_baseline", s.wrap(s.approveBaseline))
+
+	// The platform clock, absent unless this instance runs it.
+	s.registerClock(mux)
 
 	registerPages(mux, s)
 

@@ -38,6 +38,8 @@ import (
 
 	"github.com/Privasys/container-app-service-monitoring/internal/api"
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
+	"github.com/Privasys/container-app-service-monitoring/internal/clock"
+	"github.com/Privasys/container-app-service-monitoring/internal/clock/timesource"
 	"github.com/Privasys/container-app-service-monitoring/internal/config"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/journey"
@@ -129,10 +131,20 @@ func run(log *slog.Logger) error {
 	sender := webhook.New(mon, material.Signer, material.KeyID, egress, log)
 	mon.SetHooks(core.Hooks{OnAlert: sender.Enqueue})
 
+	// The platform clock. Every instance can derive its key; only one
+	// configured for it ever turns it on.
+	clockKey, err := material.ClockKey()
+	if err != nil {
+		return err
+	}
+	clockSvc := clock.NewService(mon, clock.NewSigner(clockKey), timesource.New(),
+		clock.RATLSFactory(clock.NewEgressIdentity(cfg.ManagerURL, cfg.ContainerToken)), log)
+
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
 	server.Version = version
 	server.PackDir = cfg.PackDir
 	server.Manifest = readManifest(log)
+	server.Clock = clockSvc
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -148,7 +160,9 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return nil, err
 		}
+		clockSvc.Apply(mon.PlatformClockConfig())
 		publishExtensions(ctx, log, manager, mon, material)
+		publishClockKey(ctx, log, manager, clockSvc)
 		// Start watching what was just configured, rather than at the
 		// scheduler's next reload: that delay would be a coverage gap in
 		// the first period, and one we caused.
@@ -166,7 +180,9 @@ func run(log *slog.Logger) error {
 		if err := manager.ConfigComplete(ctx); err != nil {
 			log.Error("could not lift the configure gate", "error", err)
 		}
+		clockSvc.Apply(mon.PlatformClockConfig())
 		publishExtensions(ctx, log, manager, mon, material)
+		publishClockKey(ctx, log, manager, clockSvc)
 	} else if cfg.SelfConfigure {
 		if err := selfConfigure(mon, cfg); err != nil {
 			return err
@@ -188,6 +204,7 @@ func run(log *slog.Logger) error {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		clockSvc.Stop()
 		_ = mon.RecordRuntimeEvent(model.EventShutdown, "the monitor is stopping")
 		if _, err := mon.IssueCheckpoint(core.ReasonScheduled); err != nil {
 			log.Error("could not anchor the state on shutdown", "error", err)
@@ -220,6 +237,18 @@ func publishExtensions(ctx context.Context, log *slog.Logger, manager *platform.
 		if err := manager.PublishRoot(ctx, lineage.Root); err != nil {
 			log.Error("could not publish the ledger root", "error", err)
 		}
+	}
+}
+
+// publishClockKey commits the platform clock's key to the leaf
+// certificate, on an instance running the platform clock only. The
+// platform reads it there before handing the key to the runtimes.
+func publishClockKey(ctx context.Context, log *slog.Logger, manager *platform.Manager, svc *clock.Service) {
+	if manager == nil || !svc.Enabled() {
+		return
+	}
+	if err := manager.PublishClockKey(ctx, svc.Signer().PublicKey()); err != nil {
+		log.Error("could not publish the clock key", "error", err)
 	}
 }
 

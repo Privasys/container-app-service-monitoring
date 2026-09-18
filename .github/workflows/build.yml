@@ -137,6 +137,16 @@ jobs:
             echo "::error::Configuring did not lift the gate."; exit 1
           fi
 
+          # A customer instance does not run the platform clock: its key
+          # is not published and nobody can file a clock incident here.
+          for call in "GET /api/v1/clock/key" "POST /api/v1/clock/incidents" "GET /api/v1/clock/fleet"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" -X ${call% *} -d '{}' \
+              "http://127.0.0.1:$PORT${call#* }")
+            if [ "$code" != "404" ]; then
+              echo "::error::A customer instance answered $code to $call, expected 404."; exit 1
+            fi
+          done
+
           # Deliver the credentials. This is the whole product: a real
           # least-privilege account, sealed to this build, bound to the
           # host it may be sent to.
