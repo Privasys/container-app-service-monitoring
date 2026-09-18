@@ -133,6 +133,25 @@ func (m *Material) CommitmentKey(delivered *[32]byte) (ck [32]byte, source strin
 	return ck, source, nil
 }
 
+// ClockKey derives the key the platform clock signs its floors and its
+// incident receipts with.
+//
+// It is derived from the sealed master secret rather than generated
+// beside it, the way the commitment key is: the same approved build on
+// the same volume always comes back with the same key, so the runtimes
+// that pinned it keep accepting it across a restart, and a different
+// build cannot hold it. It is a separate key from the report signing
+// key on purpose. A floor is a short, unauthenticated-looking message
+// sent to every enclave of a fleet, and nothing about it should be
+// usable as a signature over a report.
+func (m *Material) ClockKey() (ed25519.PrivateKey, error) {
+	seed, err := hkdf.Key(sha256.New, m.Master[:], nil, "monitor/clock-key/v1", ed25519.SeedSize)
+	if err != nil {
+		return nil, fmt.Errorf("keys: derive clock key: %w", err)
+	}
+	return ed25519.NewKeyFromSeed(seed), nil
+}
+
 // checkCommitmentKey records, and thereafter enforces, which key this
 // store belongs to.
 func (m *Material) checkCommitmentKey(ck [32]byte) error {

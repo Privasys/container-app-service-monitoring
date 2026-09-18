@@ -37,6 +37,17 @@ const (
 	// challenge-mode handshake returns the current authenticated state
 	// as part of the certificate rather than as a claim in the body.
 	OIDLedgerRoot = "1.3.6.1.4.1.65230.3.5.2"
+	// OIDClockKey carries SHA-256 over the public half of the key the
+	// platform clock signs floors and incident receipts with. It is only
+	// published by an instance running the platform clock. The platform
+	// reads it from this certificate before it hands the key to the
+	// enclave runtimes, so the key they pin is one only this measurement
+	// holds.
+	//
+	// It sits in the app-defined arc the runtime reserves for workload
+	// extensions (1.3.6.1.4.1.65230.5.4.<n>), at the next sub-arc after
+	// the two values above.
+	OIDClockKey = "1.3.6.1.4.1.65230.5.4.3"
 )
 
 // Manager is the in-enclave callback client.
@@ -147,4 +158,11 @@ func (m *Manager) ConfigComplete(ctx context.Context) error {
 func (m *Manager) PublishSigningKey(ctx context.Context, publicKey []byte) error {
 	sum := sha256.Sum256(publicKey)
 	return m.SetExtension(ctx, OIDSigningKey, sum[:])
+}
+
+// PublishClockKey commits SHA-256 of the platform clock's key to the
+// per-container leaf certificate.
+func (m *Manager) PublishClockKey(ctx context.Context, publicKey []byte) error {
+	sum := sha256.Sum256(publicKey)
+	return m.SetExtension(ctx, OIDClockKey, sum[:])
 }
