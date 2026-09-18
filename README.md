@@ -222,6 +222,23 @@ against a real delivery, is in
 Every delivery attempt is recorded, not only the successful one, so "you
 never told us" and "you told us six hours late" both have answers.
 
+## The platform clock
+
+The same image can run as something else entirely: the clock the
+Privasys platform checks its enclaves against. An enclave takes its time
+from its host, and a host that rolls its clock back can get expired
+credentials accepted. In this mode the monitor keeps its own time from
+Network Time Security servers, sends every enclave's runtime a signed
+"the time is at least T" every five minutes over an attested connection,
+records every answer in the ledger, answers the incidents runtimes
+report with a signed receipt, and asks the platform to quarantine an
+enclave whose host clock is wrong until it is fixed.
+
+It is off unless a configure call turns it on, and a customer instance
+never runs it. Its key is separate from the report signing key, and
+SHA-256 of it is published at OID `1.3.6.1.4.1.65230.5.4.3` on the
+instance that runs it. See [docs/platform-clock.md](docs/platform-clock.md).
+
 ## Limits
 
 Worth stating plainly, because a monitoring product that overstates
@@ -265,6 +282,8 @@ itself is the thing this one exists to replace.
 | [`internal/availability`](internal/availability) | The arithmetic, as a pure package. |
 | [`internal/core`](internal/core) | Transactions, detection, incidents, reports, anchors. |
 | [`internal/api`](internal/api) | REST, the status page, the explorer. |
+| [`internal/clock`](internal/clock) | The platform clock: NTS time, signed floors, polling over RA-TLS, incidents, quarantine. |
+| [`third_party/siv-go`](third_party/siv-go) | A copy of the AES-SIV library NTS uses, without its assembly. |
 | [`packs/example-saas`](packs/example-saas) | The reference service model. |
 | [`tools/target`](tools/target) | A stand-in service, so the tests watch something real. |
 | [`docs/`](docs) | Architecture, the availability model, packs, operations, auditing. |

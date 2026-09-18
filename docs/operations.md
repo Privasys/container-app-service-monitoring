@@ -24,6 +24,7 @@ privasys apps configure <app-id> \
 | `callback_hosts` | extra hosts this instance may contact. |
 | `maintenance_lead_time` | notice a planned window needs to leave agreed service time. Default 86400. |
 | `raw_retention_days` | how long individual readings are kept. Default 90. |
+| `platform_clock` | runs the instance as the platform's clock monitor instead. Only the platform's own instance sets it; see [platform-clock.md](platform-clock.md). |
 
 ## Environment
 
