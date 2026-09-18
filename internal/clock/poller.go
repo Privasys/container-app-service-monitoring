@@ -67,9 +67,6 @@ type RATLSPoller struct {
 	Credentials CredentialSource
 	// AllowDebugImages accepts runtimes on development images.
 	AllowDebugImages bool
-	// Identity, when set, is presented to a runtime that asks the caller
-	// for its own attestation.
-	Identity *ratls.EgressIdentity
 	// Timeout bounds the connection, the attestation, and the exchange.
 	Timeout time.Duration
 }
@@ -96,14 +93,14 @@ func (p *RATLSPoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*Po
 		}
 	}
 
+	// No client identity: the signed floor authenticates the monitor, and a
+	// runtime that has no trusted time cannot verify a caller's evidence
+	// (that is a decision on time, so it fails closed). Presenting one
+	// would make exactly the runtimes that most need a poll unreachable.
 	opts := &ratls.Options{
 		ServerName:  host,
 		Timeout:     timeout,
 		Attestation: ratls.AttestationChallenge,
-	}
-	if p.Identity != nil {
-		opts.GetClientCertificate = p.Identity.GetClientCertificate
-		opts.ClientEvidence = p.Identity.ClientEvidence
 	}
 	cli, err := ratls.Connect(host, 443, opts)
 	if err != nil {

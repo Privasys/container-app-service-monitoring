@@ -35,7 +35,7 @@ func RATLSFactory(id *ratls.EgressIdentity) Factory {
 		}
 		platform := NewPlatform(cfg.ManagementURL, identity, now)
 		poller := &RATLSPoller{
-			Credentials: creds, AllowDebugImages: cfg.AllowDebugImages, Identity: id,
+			Credentials: creds, AllowDebugImages: cfg.AllowDebugImages,
 		}
 		return platform, poller
 	}
