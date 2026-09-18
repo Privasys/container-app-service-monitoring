@@ -29,8 +29,8 @@ than checking that somebody signed it.
 
 The same image also runs the Privasys platform's clock monitor, the
 `platform-monitoring` instance, which checks the time of every enclave
-in the fleet and has an enclave with a wrong host clock quarantined at
-the gateways. See [The platform clock](#the-platform-clock).
+and vault in the fleet, has an enclave with a wrong host clock
+quarantined at the gateways, and alerts on a vault with one. See [The platform clock](#the-platform-clock).
 
 ## What it gives you
 
@@ -239,7 +239,11 @@ records every answer in the ledger, answers the incidents runtimes
 report with a signed receipt, and asks the platform to quarantine an
 enclave whose host clock is wrong until it is fixed. Runtimes do not
 check their host on their own between polls, so an enclave that misses
-two polls in a row is quarantined too.
+two polls in a row is quarantined too. The vaults of the platform's key
+vault constellation are polled the same way, directly at their own
+address; nothing stands between a vault and its callers, so a vault is
+never quarantined: the same findings raise an alert, and the next clean
+poll a recovered alert.
 
 It is off unless a configure call turns it on, and a customer instance
 never runs it. The platform runs it as the `platform-monitoring` app,

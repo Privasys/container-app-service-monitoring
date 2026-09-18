@@ -1,7 +1,8 @@
 # The platform clock
 
 An optional mode in which this monitor watches the time of every enclave
-of a Privasys fleet instead of a customer's service. It is off unless a
+of a Privasys fleet, and of every vault of its key vault constellation,
+instead of a customer's service. It is off unless a
 configure call turns it on, and a customer instance never runs it. The
 platform runs one instance per environment, as the app
 `platform-monitoring` ("Platform monitoring").
@@ -100,7 +101,8 @@ joined with `\n`, with no trailing newline.
 
 **Floor**, monitor to runtime, `POST /api/v1/clock/poll` on the
 enclave-os-virtual manager and `POST /clock/poll` on the enclave-os-mini
-core, both reached through the enclave's manager hostname:
+core, reached through the enclave's manager hostname (a vault's core
+directly at its own address, see [Vaults](#vaults)):
 
 ```json
 { "enclave_id": "…", "t_ms": 1789000000000, "seq": 42, "key_id": "…", "sig": "…" }
@@ -153,6 +155,13 @@ floor is sent, the monitor verifies what answered:
 
 A runtime whose evidence does not verify is recorded as `unverified`,
 and nothing it said is used.
+
+A vault is polled the same way, except for where the connection goes:
+nothing routes by name in front of a vault, so the monitor connects to
+the vault's own address as the platform lists it (`gateway_host` and
+`port`), with no server name, and sends the floor to the core's
+`POST /clock/poll`. The certificate chain, the quote bound to the
+connection and its verification by the attestation server are the same.
 
 ## Incidents
 
@@ -232,6 +241,33 @@ Not a clock problem, and never quarantined for on its own:
 - a runtime found the monitor's clock wrong (`monitor_clock_wrong`).
   That is the monitor's problem, and it is alerted on as such.
 
+## Vaults
+
+The members of the platform's active key vault constellation run the
+same SGX runtime core as the other SGX enclaves, with the same clock, so
+the platform lists them too, with `kind` `vault`. They are polled every
+round like the enclaves, and their answers are recorded the same way.
+Their incident reports are taken like any other listed runtime's.
+
+A vault is never quarantined. Its callers reach it directly at its own
+address, not through a gateway, so there is nothing that could withhold
+it, and the platform refuses a quarantine that names one. The findings
+that would quarantine an enclave raise an alert instead, and the first
+clean poll after one (an attested answer, `in_sync`, not flagged, a
+trusted time, within the tolerance) raises a recovered alert:
+
+- `clock.vault_host_clock_wrong`: verdict `host_clock_wrong`, a flagged
+  (frozen) answer, no trusted time (whether said in an answer or by
+  refusing the floor), or a host clock more than 10 seconds from the
+  monitor's;
+- `clock.vault_unreachable`: two polls in a row with no answer;
+- `clock.vault_recovered`: the clean poll, naming the alert it ends.
+
+An alert is raised when the finding changes, not on every reading. The
+alert standing on each vault is kept in the record with the reading that
+raised it. A vault on a build that predates the clock answers the poll
+with 404: that is recorded, and alerted on by neither rule.
+
 ## Alerts
 
 Delivered like every other alert, signed and carrying the ledger
@@ -245,16 +281,21 @@ coordinates of the change, to the clock's callback:
 | `clock.monitor_clock_wrong` | a runtime found the monitor's clock wrong |
 | `clock.runtime_config_missing` | a runtime does not hold the monitor's key |
 | `clock.trusted_time_lost` | the monitor has no trusted time, and sends no floor |
+| `clock.vault_host_clock_wrong` | a vault's host clock is wrong, its time frozen, or it has none |
+| `clock.vault_unreachable` | a vault gave no answer to two polls in a row |
+| `clock.vault_recovered` | a clean poll after one of the two above |
 
 ## The record
 
-Everything is ledgered, in four tables: `clock_readings` (one row per
+Everything is ledgered, in five tables: `clock_readings` (one row per
 poll, answered or not: the floor sent, the monitor's time at the
 answer, the round trip, the runtime's host time, trusted time, floor,
 flag, verdict and NTS time, and the drift), `clock_incidents` (reports
 as received), `clock_actions` (every quarantine and release asked for,
-with its evidence and the platform's answer) and `clock_enclaves` (the
-current position on each enclave).
+with its evidence and the platform's answer), `clock_enclaves` (the
+current position on each enclave and vault) and `clock_vault_alerts` (the
+alert standing on each vault). Each vault alert is written in the same
+transaction as the alert it raises.
 
 ## Endpoints
 
@@ -262,7 +303,7 @@ current position on each enclave).
 | --- | --- | --- |
 | `GET /api/v1/clock/key` | anyone | the clock key |
 | `POST /api/v1/clock/incidents` | anyone | report an incident, get a receipt |
-| `GET /api/v1/clock/fleet` | explorer | the fleet view: every enclave's latest reading, drift and quarantine, and the monitor's own time |
+| `GET /api/v1/clock/fleet` | explorer | the fleet view: every enclave's and vault's latest reading, drift, `kind`, quarantine (enclaves) or `vault_alert` (vaults), and the monitor's own time |
 | `GET /api/v1/clock/readings?enclave=&limit=` | explorer | readings, newest first |
 | `GET /api/v1/clock/incidents?limit=` | explorer | incident reports, newest first |
 | `GET /api/v1/clock/actions?limit=` | explorer | quarantines and releases, newest first |
@@ -315,7 +356,9 @@ restart resumes polling by itself, from the next sequence number.
   certificate chains to the Privasys fleet, over a connection its quote
   is bound to. The platform's enclave list carries no measurements, so
   the monitor does not pin which runtime build each enclave runs; the
-  platform does that when it approves the enclave.
+  platform does that when it approves the enclave. A vault runs a
+  different build from the enclaves, and is accepted on the same terms:
+  a genuine SGX quote from a runtime chaining to the fleet.
 - **The monotonic clock is the guest kernel's.** Go's monotonic clock
   cannot be set, by the host or anyone else, but its rate comes from the
   guest's clock source. On a guest that reads the processor's timestamp
