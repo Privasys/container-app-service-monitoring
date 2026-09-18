@@ -124,6 +124,12 @@ func (m *Manager) PublishRoot(ctx context.Context, rootHex string) error {
 // standing by at three in the morning to type it again. Without this
 // call every redeploy looks like configuration loss while the
 // configuration was never gone.
+//
+// The manager authenticates this call like every self-targeted container
+// call: the launcher-minted PRIVASYS_CONTAINER_TOKEN as a Bearer token,
+// bound to the container named in the path. Any other header is refused
+// with 401 "expected Bearer PRIVASYS_CONTAINER_TOKEN" and leaves the gate
+// down.
 func (m *Manager) ConfigComplete(ctx context.Context) error {
 	if m == nil {
 		return nil
@@ -135,7 +141,7 @@ func (m *Manager) ConfigComplete(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Container-Token", m.token)
+	req.Header.Set("Authorization", "Bearer "+m.token)
 	resp, err := m.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("platform: config-complete: %w", err)

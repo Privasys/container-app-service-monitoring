@@ -170,7 +170,14 @@ refuses to run for a version no checkpoint covers.
 ## Troubleshooting
 
 **Everything answers 503.** The configure gate has not been lifted.
-`GET /health` reports the state and any configuration failure.
+`GET /health` reports the state and any configuration failure. After a
+restart or an in-place redeploy the monitor lifts the gate itself once
+it has restored its configuration from its volume; the log says
+`could not lift the configure gate` when the manager refused that call.
+Up to v0.1.2 it always did, with `401 expected Bearer
+PRIVASYS_CONTAINER_TOKEN` (the token went in the wrong header); from
+v0.1.3 it sends the token the way the manager expects, and a configure
+call from the owner lifts the gate on any version.
 
 **Readings are `error` with class `policy`.** The monitor could not take
 a reading: a credential is missing, a credential is bound to a different
