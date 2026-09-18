@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -388,6 +389,47 @@ func TestARuntimeWithoutTheKeyIsReportedOnceAndNotQuarantined(t *testing.T) {
 	r.poll()
 	if r.state().ConfigMissing {
 		t.Fatal("the configuration came back and the fleet view did not notice")
+	}
+}
+
+func TestTwoSilentPollsQuarantineAnEnclaveThatWasNeverFlagged(t *testing.T) {
+	r := newRig(t)
+	r.poller.set(func(PollRequest) (*PollResult, error) {
+		return nil, ErrUnreachable
+	})
+	r.poll()
+	if calls := r.platform.Calls(); len(calls) != 0 {
+		t.Fatalf("one silent poll caused %v", calls)
+	}
+	if st := r.state(); st.FailedPolls != 1 {
+		t.Fatalf("failed polls %d, want 1", st.FailedPolls)
+	}
+	r.poll()
+	if calls := r.platform.Calls(); len(calls) != 1 || calls[0] != "quarantine:"+r.enclave.ID {
+		t.Fatalf("platform calls %v, want a quarantine on the second silent poll", calls)
+	}
+	st := r.state()
+	if !st.Quarantined || !strings.HasPrefix(st.QuarantineReason, "unreachable") {
+		t.Fatalf("position %+v", st)
+	}
+
+	// Answering again, but not yet clean: still quarantined, and the count
+	// starts over.
+	key := r.svc.Signer().KeyID()
+	r.poller.set(func(req PollRequest) (*PollResult, error) {
+		return reply(req, key, 0, VerdictIgnoredStale, false)
+	})
+	r.poll()
+	if st := r.state(); !st.Quarantined || st.FailedPolls != 0 {
+		t.Fatalf("position %+v", st)
+	}
+	// A clean in_sync answer releases it.
+	r.poller.set(func(req PollRequest) (*PollResult, error) {
+		return reply(req, key, 0, VerdictInSync, false)
+	})
+	r.poll()
+	if calls := r.platform.Calls(); len(calls) != 2 || calls[1] != "release:"+r.enclave.ID {
+		t.Fatalf("platform calls %v, want a release", calls)
 	}
 }
 

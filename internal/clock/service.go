@@ -380,7 +380,7 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 	}
 
 	req := s.signer.Floor(e.ID, sent.UnixMilli(), s.seq.Add(1))
-	pollCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	pollCtx, cancel := context.WithTimeout(ctx, PollTimeout+10*time.Second)
 	res, err := poller.Poll(pollCtx, e, req)
 	cancel()
 	received, ok := s.clock.Now()
@@ -465,6 +465,11 @@ func advance(prev model.ClockEnclave, e Enclave, r model.ClockReading, keyID str
 	switch r.Outcome {
 	case model.ClockOutcomeOK, model.ClockOutcomeRefused:
 		next.ConfigMissing = configMissing(r, keyID)
+	}
+	if r.Outcome == model.ClockOutcomeUnreachable {
+		next.FailedPolls = prev.FailedPolls + 1
+	} else {
+		next.FailedPolls = 0
 	}
 	// A quarantine of ours that the platform no longer shows was lifted
 	// by someone else. It is not ours to keep tracking.

@@ -143,6 +143,9 @@ type ClockEnclave struct {
 	// answered naming another key. The fix is on the platform side, and
 	// it is alerted on, never quarantined for.
 	ConfigMissing bool `json:"config_missing"`
+	// FailedPolls counts consecutive polls that got no answer at all
+	// (no connection, or none in time). Any answer resets it.
+	FailedPolls int `json:"failed_polls"`
 	// Quarantined is true while a quarantine this monitor asked for is in
 	// force. One an operator placed is reported by the platform, not
 	// here, and this monitor never lifts it.

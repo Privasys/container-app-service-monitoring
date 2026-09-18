@@ -28,9 +28,11 @@ import (
 //   - the host clock is more than the tolerance from the monitor's, and
 //     the runtime did not find the monitor to be the one that is wrong.
 //
-// And one thing about silence: an enclave that was flagged at its last
-// answer and now does not answer at all is quarantined too. A host that
-// blocks the monitor must not keep users on a clock it broke.
+// And silence: an enclave that was flagged at its last answer and now
+// does not answer is quarantined at once, and any enclave that does not
+// answer MaxFailedPolls polls in a row is quarantined whatever it said
+// before, with the reason "unreachable". A host that blocks the monitor
+// must not keep users on a clock it broke.
 //
 // A release needs the opposite, all of it at once: an attested answer,
 // verdict in_sync, not flagged, and within the tolerance. The monitor
@@ -39,6 +41,14 @@ import (
 //
 // A runtime that does not hold this monitor's key is not a clock
 // problem. It is reported, and never quarantined for on its own.
+
+// MaxFailedPolls is how many polls in a row may get no answer before the
+// enclave is quarantined, whatever it said before. A host can keep the
+// monitor out (drop the manager route, or hold the runtime's NTS fetch
+// past the poll timeout) while its clock is wrong and nothing is flagged
+// yet. Two silent rounds in a row, about five minutes apart, are enough
+// to act on; one lost connection is not.
+const MaxFailedPolls = 2
 
 // Decision is what a reading calls for.
 type Decision struct {
@@ -88,6 +98,11 @@ func Decide(prev model.ClockEnclave, r model.ClockReading, platformQuarantined b
 	if failedClosed(r) && !ours && !platformQuarantined {
 		return Decision{Op: model.ClockOpQuarantine, Reason: fmt.Sprintf(
 			"clock: the runtime cannot establish its time and has failed closed (%s)", orDash(r.Error))}
+	}
+	if r.Outcome == model.ClockOutcomeUnreachable && prev.FailedPolls+1 >= MaxFailedPolls &&
+		!ours && !platformQuarantined {
+		return Decision{Op: model.ClockOpQuarantine, Reason: fmt.Sprintf(
+			"unreachable: %d consecutive polls got no answer (%s)", prev.FailedPolls+1, orDash(r.Error))}
 	}
 	if prev.LastFlagged && !ours && !platformQuarantined {
 		return Decision{Op: model.ClockOpQuarantine, Reason: fmt.Sprintf(

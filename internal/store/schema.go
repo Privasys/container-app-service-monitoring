@@ -522,6 +522,7 @@ var baseTables = []tableDDL{
 			last_host_ms BIGINT NOT NULL,
 			last_config_key_id VARCHAR(32) NOT NULL,
 			config_missing BOOLEAN NOT NULL,
+			failed_polls INT NOT NULL,
 			quarantined BOOLEAN NOT NULL,
 			quarantined_ms BIGINT NOT NULL,
 			quarantine_reason VARCHAR(255) NOT NULL,

@@ -176,7 +176,12 @@ monitor can keep checking it. These quarantine:
 - the host clock is more than 10 seconds from the monitor's, measured at
   the midpoint of the round trip, unless the runtime found the monitor
   to be the one that is wrong;
-- an enclave that was flagged at its last answer stops answering.
+- an enclave that was flagged at its last answer stops answering;
+- an enclave that gives no answer to two polls in a row (no connection,
+  or none within the 30-second poll timeout), whatever it said before,
+  with the reason `unreachable`. A host can keep the monitor out by
+  dropping the manager route, or by holding the runtime's NTS fetch past
+  the timeout, while nothing is flagged yet.
 
 A release needs all of it at once: an attested answer, verdict
 `in_sync`, not flagged, a trusted time, and within the tolerance. The

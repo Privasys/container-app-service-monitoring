@@ -403,8 +403,8 @@ func clockEnclaveOp(st model.ClockEnclave) model.WriteOp {
 			"last_verdict": clip(st.LastVerdict, 32), "last_flagged": st.LastFlagged,
 			"last_reason": clip(st.LastReason, 64), "last_drift_ms": st.LastDriftMs,
 			"last_host_ms": st.LastHostMs, "last_config_key_id": clip(st.LastConfigKey, 32),
-			"config_missing": st.ConfigMissing,
-			"quarantined":    st.Quarantined, "quarantined_ms": st.QuarantinedMs,
+			"config_missing": st.ConfigMissing, "failed_polls": int64(st.FailedPolls),
+			"quarantined": st.Quarantined, "quarantined_ms": st.QuarantinedMs,
 			"quarantine_reason": clip(st.QuarantineReason, 255), "updated_ms": st.UpdatedMs,
 		},
 	}
@@ -419,6 +419,7 @@ func rowToClockEnclave(row store.Row) model.ClockEnclave {
 		LastFlagged: row.Bool("last_flagged"), LastReason: row.Str("last_reason"),
 		LastDriftMs: row.Int("last_drift_ms"), LastHostMs: row.Int("last_host_ms"),
 		LastConfigKey: row.Str("last_config_key_id"), ConfigMissing: row.Bool("config_missing"),
+		FailedPolls:   int(row.Int("failed_polls")),
 		Quarantined:   row.Bool("quarantined"),
 		QuarantinedMs: row.Int("quarantined_ms"), QuarantineReason: row.Str("quarantine_reason"),
 		UpdatedMs: row.Int("updated_ms"),

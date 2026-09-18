@@ -52,8 +52,15 @@ func TestTheQuarantineRules(t *testing.T) {
 			model.ClockReading{Outcome: model.ClockOutcomeUnreachable}, false, model.ClockOpQuarantine, true},
 		{"unverified after flagged", flaggedBefore,
 			model.ClockReading{Outcome: model.ClockOutcomeUnverified}, false, model.ClockOpQuarantine, true},
-		{"unreachable, never flagged", clean,
+		{"unreachable once, never flagged", clean,
 			model.ClockReading{Outcome: model.ClockOutcomeUnreachable}, false, "", false},
+		// A host that keeps the monitor out while nothing is flagged yet.
+		{"unreachable twice in a row", model.ClockEnclave{FailedPolls: 1},
+			model.ClockReading{Outcome: model.ClockOutcomeUnreachable}, false, model.ClockOpQuarantine, true},
+		{"unreachable twice, already ours", model.ClockEnclave{FailedPolls: 1, Quarantined: true},
+			model.ClockReading{Outcome: model.ClockOutcomeUnreachable}, true, "", false},
+		{"unverified is not silence", model.ClockEnclave{FailedPolls: 1},
+			model.ClockReading{Outcome: model.ClockOutcomeUnverified}, false, "", false},
 		// A runtime that lost the monitor's key is a configuration problem.
 		{"refused as unconfigured after flagged", flaggedBefore,
 			model.ClockReading{Outcome: model.ClockOutcomeRefused, HTTPStatus: 409}, false, "", false},

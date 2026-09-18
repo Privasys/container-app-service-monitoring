@@ -54,6 +54,11 @@ type Poller interface {
 	Poll(ctx context.Context, e Enclave, req PollRequest) (*PollResult, error)
 }
 
+// PollTimeout bounds one poll: connection, attestation, and the answer.
+// A runtime that disagrees with the floor fetches an NTS quorum before
+// it answers, which it caps at about fifteen seconds.
+const PollTimeout = 30 * time.Second
+
 // CredentialSource returns the attestation server and a token for it.
 type CredentialSource func(ctx context.Context) (server, token string, err error)
 
@@ -83,7 +88,7 @@ func (p *RATLSPoller) Poll(ctx context.Context, e Enclave, req PollRequest) (*Po
 	}
 	timeout := p.Timeout
 	if timeout <= 0 {
-		timeout = 20 * time.Second
+		timeout = PollTimeout
 	}
 	if dl, ok := ctx.Deadline(); ok {
 		if left := time.Until(dl); left < timeout {
