@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -464,17 +465,7 @@ func TestSilenceAfterAFlagIsQuarantined(t *testing.T) {
 
 func TestAnIncidentGetsAReceiptAndCausesAPoll(t *testing.T) {
 	r := newRig(t)
-	// The earlier poll is recent; age it so the incident is allowed one.
-	r.svc.mu.Lock()
-	r.svc.lastPoll[r.enclave.ID] = time.Now().Add(-time.Minute)
-	r.svc.mu.Unlock()
-
-	nonce := make([]byte, 32)
-	_, _ = rand.Read(nonce)
-	report := IncidentReport{
-		EnclaveID: r.enclave.ID, Reason: ReasonHostBehindFloor,
-		HostTimeMs: 1, FloorMs: 2, Nonce: base64.RawURLEncoding.EncodeToString(nonce),
-	}
+	report := newReport(r.enclave.ID)
 	started := time.Now()
 	receipt, err := r.svc.Incident(context.Background(), report, "192.0.2.1")
 	if err != nil {
@@ -563,5 +554,135 @@ func TestNoFloorIsSentWithoutTrustedTime(t *testing.T) {
 	fleet, err := r.svc.Fleet()
 	if err != nil || fleet.LastRound.Error == "" || len(fleet.Enclaves) != 1 {
 		t.Fatalf("fleet %+v, %v", fleet, err)
+	}
+}
+
+func newReport(enclaveID string) IncidentReport {
+	nonce := make([]byte, 32)
+	_, _ = rand.Read(nonce)
+	return IncidentReport{
+		EnclaveID: enclaveID, Reason: ReasonHostBehindFloor,
+		HostTimeMs: 1, FloorMs: 2, Nonce: base64.RawURLEncoding.EncodeToString(nonce),
+	}
+}
+
+func (r *rig) incidentPolls() int {
+	r.t.Helper()
+	readings, err := r.mon.ClockReadings(r.enclave.ID, 100)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	n := 0
+	for _, reading := range readings {
+		if reading.Cause == model.ClockCauseIncident {
+			n++
+		}
+	}
+	return n
+}
+
+func TestReportsCauseAtMostOnePollAMinute(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 3; i++ {
+		if _, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.waitPolled()
+	deadline := time.Now().Add(5 * time.Second)
+	for r.incidentPolls() < 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("no poll followed the reports")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Give any further poll the time to happen, then count.
+	time.Sleep(200 * time.Millisecond)
+	r.waitIdle()
+	if n := r.incidentPolls(); n != 1 {
+		t.Fatalf("three reports caused %d polls, want 1", n)
+	}
+	incidents, err := r.mon.ClockIncidents(10)
+	if err != nil || len(incidents) != 3 {
+		t.Fatalf("incidents %d, %v; every report taken is still recorded", len(incidents), err)
+	}
+
+	// A minute later a report may cause a poll again.
+	r.svc.mu.Lock()
+	r.svc.lastIncidentPoll[r.enclave.ID] = time.Now().Add(-incidentPollGap)
+	r.svc.mu.Unlock()
+	if _, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for r.incidentPolls() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("a report a minute later caused no poll")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestAReportForAnUnlistedEnclaveGetsNoReceipt(t *testing.T) {
+	r := newRig(t)
+	_, err := r.svc.Incident(context.Background(), newReport("99999999-0000-0000-0000-000000000000"), "192.0.2.1")
+	if !errors.Is(err, ErrUnknownEnclave) {
+		t.Fatalf("got %v, want the unknown-enclave refusal", err)
+	}
+	if incidents, _ := r.mon.ClockIncidents(10); len(incidents) != 0 {
+		t.Fatalf("a refused report was recorded: %+v", incidents)
+	}
+}
+
+func TestReportsAreRateLimited(t *testing.T) {
+	r := newRig(t)
+	taken := 0
+	for i := 0; i < incidentsPerEnclave+3; i++ {
+		_, err := r.svc.Incident(context.Background(), newReport(r.enclave.ID), "192.0.2.1")
+		switch {
+		case err == nil:
+			taken++
+		case errors.Is(err, ErrTooManyIncidents):
+		default:
+			t.Fatal(err)
+		}
+	}
+	if taken != incidentsPerEnclave {
+		t.Fatalf("%d reports taken in a burst, want %d", taken, incidentsPerEnclave)
+	}
+	time.Sleep(200 * time.Millisecond)
+	r.waitIdle()
+	if incidents, _ := r.mon.ClockIncidents(100); len(incidents) != incidentsPerEnclave {
+		t.Fatalf("%d incidents recorded, want %d", len(incidents), incidentsPerEnclave)
+	}
+}
+
+func TestTheRateLimitIsPerEnclaveAndGlobal(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	l := newRateLimit(6, 10)
+	for i := 0; i < 6; i++ {
+		if !l.allow("a", now) {
+			t.Fatalf("report %d for a refused", i)
+		}
+	}
+	if l.allow("a", now) {
+		t.Fatal("a seventh report for one enclave in the same instant was taken")
+	}
+	for i := 0; i < 4; i++ {
+		if !l.allow("b", now) {
+			t.Fatalf("report %d for b refused", i)
+		}
+	}
+	if l.allow("c", now) {
+		t.Fatal("the global limit did not hold")
+	}
+	// Ten seconds refill one report per enclave (6 a minute) and more
+	// than one globally.
+	later := now.Add(10 * time.Second)
+	if !l.allow("a", later) {
+		t.Fatal("the per-enclave bucket did not refill")
+	}
+	if l.allow("a", later) {
+		t.Fatal("the per-enclave bucket refilled too much")
 	}
 }

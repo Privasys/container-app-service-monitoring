@@ -77,12 +77,32 @@ func (s *Server) clockIncident(w http.ResponseWriter, r *http.Request) {
 	}
 	receipt, err := s.Clock.Incident(r.Context(), report, remoteHost(r))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error(), "")
+		status := incidentStatus(err)
+		if status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", "10")
+		}
+		writeError(w, status, err.Error(), "")
 		return
 	}
 	writeJSON(w, http.StatusOK, receipt)
 }
 
+// incidentStatus maps a refused report onto its status code. None of
+// them carries a receipt.
+func incidentStatus(err error) int {
+	switch {
+	case errors.Is(err, clock.ErrTooManyIncidents):
+		return http.StatusTooManyRequests
+	case errors.Is(err, clock.ErrUnknownEnclave):
+		return http.StatusNotFound
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+// remoteHost is the peer address, for the record only. Runtimes reach
+// this endpoint through the gateway's splice path, so no header set by a
+// terminating proxy is read or trusted here.
 func remoteHost(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

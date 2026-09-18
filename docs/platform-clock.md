@@ -158,8 +158,20 @@ polled straight away.
 
 The report itself decides nothing. Anyone can send one; only an attested
 runtime can answer a poll, and the monitor acts on the poll's answer.
-Reports for the same enclave within ten seconds of a poll share that
-poll.
+Reports cause at most one poll of an enclave a minute; the scheduled
+round polls it every five minutes regardless.
+
+Because the endpoint takes no credentials, what it can cost is bounded.
+A report is taken only for an enclave in the platform's latest list,
+and at most six a minute for one enclave and sixty a minute in all. Each
+report taken is one ledger write, so that is also the bound on what the
+endpoint can write. A refused report gets no receipt: 404 for an
+enclave the monitor does not watch, 429 (with `Retry-After`) over the
+rate, 400 for a malformed report.
+
+Runtimes reach this endpoint the same way the monitor reaches them,
+through the gateway's splice path, and the handler reads nothing a
+terminating proxy would add.
 
 ## Quarantine
 

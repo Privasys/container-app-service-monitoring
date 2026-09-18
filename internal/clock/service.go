@@ -65,20 +65,22 @@ type Service struct {
 
 	seq atomic.Int64
 
-	mu        sync.Mutex
-	cfg       *core.PlatformClock
-	cancel    context.CancelFunc
-	done      chan struct{}
-	platform  PlatformAPI
-	poller    Poller
-	enclaves  map[string]Enclave
-	listedAt  time.Time
-	cycle     CycleStatus
-	timeLost  bool
-	creds     credCache
-	locks     map[string]*sync.Mutex
-	lastPoll  map[string]time.Time
-	seqLoaded bool
+	mu       sync.Mutex
+	cfg      *core.PlatformClock
+	cancel   context.CancelFunc
+	done     chan struct{}
+	platform PlatformAPI
+	poller   Poller
+	enclaves map[string]Enclave
+	listedAt time.Time
+	cycle    CycleStatus
+	timeLost bool
+	creds    credCache
+	locks    map[string]*sync.Mutex
+	// lastIncidentPoll is when a report last caused a poll of each enclave.
+	lastIncidentPoll map[string]time.Time
+	incidentLimit    *rateLimit
+	seqLoaded        bool
 }
 
 type credCache struct {
@@ -93,7 +95,8 @@ func NewService(mon *core.Monitor, signer *Signer, clock Clock, factory Factory,
 		mon: mon, signer: signer, clock: clock, factory: factory, log: log,
 		Interval: DefaultInterval,
 		enclaves: map[string]Enclave{}, locks: map[string]*sync.Mutex{},
-		lastPoll: map[string]time.Time{},
+		lastIncidentPoll: map[string]time.Time{},
+		incidentLimit:    newRateLimit(incidentsPerEnclave, incidentsGlobal),
 	}
 }
 
@@ -362,7 +365,6 @@ func (s *Service) Poll(ctx context.Context, e Enclave, cause, incidentID string)
 
 	s.mu.Lock()
 	poller := s.poller
-	s.lastPoll[e.ID] = time.Now()
 	s.mu.Unlock()
 	if poller == nil {
 		return nil, errors.New("clock: the platform clock is off")
@@ -611,10 +613,29 @@ func evidenceOf(r model.ClockReading, keyID string) map[string]any {
 // the ledger for long.
 const receiptBudget = 700 * time.Millisecond
 
-// incidentPollGap is the shortest gap between two polls of an enclave
+// incidentPollGap is the shortest gap between two polls of one enclave
 // that incident reports can cause. A burst of reports, genuine or not,
-// costs one poll.
-const incidentPollGap = 10 * time.Second
+// costs one poll a minute.
+const incidentPollGap = time.Minute
+
+// The incident endpoint needs no credentials, so what it can cost is
+// bounded: a report is taken only for an enclave the platform listed,
+// at most incidentsPerEnclave a minute for one enclave and
+// incidentsGlobal a minute in all. Each report taken is one ledger
+// write, so these are also the bound on what the endpoint can write.
+const (
+	incidentsPerEnclave = 6
+	incidentsGlobal     = 60
+)
+
+// Refusals of an incident report. Neither gets a receipt.
+var (
+	// ErrUnknownEnclave: the report names an enclave the last list from
+	// the platform did not have.
+	ErrUnknownEnclave = errors.New("clock: the report names an enclave this monitor does not watch")
+	// ErrTooManyIncidents: over the per-enclave or the global rate.
+	ErrTooManyIncidents = errors.New("clock: too many incident reports; try again shortly")
+)
 
 // Incident receives a report, answers it with a signed receipt, records
 // it, and polls the enclave it names. The receipt is returned within
@@ -626,23 +647,31 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 	if err := report.Validate(); err != nil {
 		return Receipt{}, err
 	}
+	s.mu.Lock()
+	e, known := s.enclaves[report.EnclaveID]
+	allowed := known && s.incidentLimit.allow(report.EnclaveID, time.Now())
+	s.mu.Unlock()
+	if !known {
+		return Receipt{}, ErrUnknownEnclave
+	}
+	if !allowed {
+		s.log.Warn("clock incident refused: over the rate", "enclave", report.EnclaveID)
+		return Receipt{}, ErrTooManyIncidents
+	}
 	id, err := core.NewID("cki")
 	if err != nil {
 		return Receipt{}, err
 	}
 	receipt := s.signer.Receipt(report.EnclaveID, report.Nonce, id)
 
-	s.mu.Lock()
-	e, known := s.enclaves[report.EnclaveID]
-	s.mu.Unlock()
 	received := s.challengeTime()
 	rec := model.ClockIncident{
 		ID: id, EnclaveID: report.EnclaveID, Reason: report.Reason,
 		HostMs: report.HostTimeMs, FloorMs: report.FloorMs, NTSMs: report.NTSTimeMs,
-		Nonce: report.Nonce, ReceivedMs: received.UnixMilli(), KnownFleet: known,
+		Nonce: report.Nonce, ReceivedMs: received.UnixMilli(), KnownFleet: true,
 		RemoteAddr: remoteAddr,
 	}
-	s.log.Warn("clock incident reported", "enclave", report.EnclaveID, "reason", report.Reason, "known", known)
+	s.log.Warn("clock incident reported", "enclave", report.EnclaveID, "reason", report.Reason)
 
 	recorded := make(chan struct{})
 	go func() {
@@ -650,7 +679,7 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 			s.log.Error("could not record a clock incident", "incident", id, "error", err)
 		}
 		close(recorded)
-		s.pollAfterIncident(e, known, report.EnclaveID, id)
+		s.pollAfterIncident(e, id)
 	}()
 	select {
 	case <-recorded:
@@ -660,26 +689,25 @@ func (s *Service) Incident(ctx context.Context, report IncidentReport, remoteAdd
 	return receipt, nil
 }
 
-// pollAfterIncident polls the enclave a report names, at once. The
-// report itself decides nothing: the poll's answer does.
-func (s *Service) pollAfterIncident(e Enclave, known bool, enclaveID, incidentID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	if !known {
-		e, known = s.refreshFor(ctx, enclaveID)
-		if !known {
-			s.log.Warn("an incident names an enclave the platform does not list", "enclave", enclaveID)
-			return
-		}
-	}
+// pollAfterIncident polls the enclave a report names, at once, unless a
+// report already caused a poll of it in the last minute. The report
+// itself decides nothing: the poll's answer does.
+func (s *Service) pollAfterIncident(e Enclave, incidentID string) {
+	now := time.Now()
 	s.mu.Lock()
-	last := s.lastPoll[enclaveID]
+	last := s.lastIncidentPoll[e.ID]
+	due := last.IsZero() || now.Sub(last) >= incidentPollGap
+	if due {
+		s.lastIncidentPoll[e.ID] = now
+	}
 	s.mu.Unlock()
-	if time.Since(last) < incidentPollGap {
+	if !due {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	if _, err := s.Poll(ctx, e, model.ClockCauseIncident, incidentID); err != nil {
-		s.log.Error("could not poll after an incident", "enclave", enclaveID, "error", err)
+		s.log.Error("could not poll after an incident", "enclave", e.ID, "error", err)
 	}
 }
 
