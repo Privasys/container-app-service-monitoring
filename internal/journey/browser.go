@@ -59,8 +59,8 @@ type BrowserClient struct {
 }
 
 // OIDImageDigest is where the platform measures the workload image into
-// the RA-TLS leaf certificate.
-var OIDImageDigest = []int{1, 3, 6, 1, 4, 1, 65230, 3, 2}
+// the RA-TLS leaf certificate (workload code digest, scheme v2).
+var OIDImageDigest = []int{1, 3, 6, 1, 4, 1, 65230, 4, 2}
 
 // Configured reports whether a renderer has been set up.
 func (c *BrowserClient) Configured() bool { return c != nil && c.URL != "" }

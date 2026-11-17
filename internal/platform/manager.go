@@ -32,11 +32,11 @@ const (
 	// build signs its reports, checkpoints and alerts with. A verifying
 	// client therefore knows which measurement holds the key behind any
 	// evidence it is handed.
-	OIDSigningKey = "1.3.6.1.4.1.65230.3.5.1"
+	OIDSigningKey = "1.3.6.1.4.1.65230.5.4.1"
 	// OIDLedgerRoot carries the live ledger root, so a
 	// challenge-mode handshake returns the current authenticated state
 	// as part of the certificate rather than as a claim in the body.
-	OIDLedgerRoot = "1.3.6.1.4.1.65230.3.5.2"
+	OIDLedgerRoot = "1.3.6.1.4.1.65230.5.4.2"
 	// OIDClockKey carries SHA-256 over the public half of the key the
 	// platform clock signs floors and incident receipts with. It is only
 	// published by an instance running the platform clock. The platform

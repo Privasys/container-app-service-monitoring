@@ -143,9 +143,9 @@ measurement is in the certificate.
 
 | OID | Value |
 | --- | --- |
-| `1.3.6.1.4.1.65230.3.2` | the workload image digest, measured by the platform |
-| `1.3.6.1.4.1.65230.3.5.1` | SHA-256 of the report signing public key |
-| `1.3.6.1.4.1.65230.3.5.2` | the live ledger root |
+| `1.3.6.1.4.1.65230.4.2` | the workload image digest, measured by the platform |
+| `1.3.6.1.4.1.65230.5.4.1` | SHA-256 of the report signing public key |
+| `1.3.6.1.4.1.65230.5.4.2` | the live ledger root |
 
 They live in the manager's memory rather than on the volume, so they are
 republished at every boot and after every configure.
@@ -178,7 +178,7 @@ compromised page has nothing to find.
 What crosses the gap is one request carrying resolved values and one
 response carrying observations. Before that request is sent, the
 renderer's certificate is checked for the workload image digest the
-owner pinned at OID `1.3.6.1.4.1.65230.3.2`, so the question "which
+owner pinned at OID `1.3.6.1.4.1.65230.4.2`, so the question "which
 build am I handing this credential to" is answered by a hardware quote
 rather than by a hostname. The renderer, for its part, requires a shared
 token: attestation says which build is on one end, the token says which

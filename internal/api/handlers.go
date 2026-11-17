@@ -70,10 +70,10 @@ func (s *Server) wellKnown(w http.ResponseWriter, _ *http.Request) {
 			"key_id": keyID, "alg": "ed25519", "public_key": publicKey,
 		},
 		"attestation_oids": map[string]string{
-			"image_digest": "1.3.6.1.4.1.65230.3.2",
-			"signing_key":  "1.3.6.1.4.1.65230.3.5.1",
-			"ledger_root":  "1.3.6.1.4.1.65230.3.5.2",
-			"app_id":       "1.3.6.1.4.1.65230.3.6",
+			"image_digest": "1.3.6.1.4.1.65230.4.2",
+			"signing_key":  "1.3.6.1.4.1.65230.5.4.1",
+			"ledger_root":  "1.3.6.1.4.1.65230.5.4.2",
+			"app_id":       "1.3.6.1.4.1.65230.4.1",
 		},
 		"webhook_schema": "privasys.monitor.alert/v1",
 	}

@@ -22,7 +22,7 @@ curl https://…/.well-known/privasys-monitor.json | jq .signing_key > key.json
 ```
 
 The same key's SHA-256 is published on the RA-TLS leaf certificate at
-OID `1.3.6.1.4.1.65230.3.5.1`. A client that verified the certificate
+OID `1.3.6.1.4.1.65230.5.4.1`. A client that verified the certificate
 therefore knows which build holds the key behind everything below.
 
 ## One row: `bundle`

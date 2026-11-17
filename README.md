@@ -192,9 +192,9 @@ per-container leaf:
 
 | OID | Value |
 | --- | --- |
-| `1.3.6.1.4.1.65230.3.2` | the workload image digest |
-| `1.3.6.1.4.1.65230.3.5.1` | SHA-256 of the report signing public key |
-| `1.3.6.1.4.1.65230.3.5.2` | the live ledger root |
+| `1.3.6.1.4.1.65230.4.2` | the workload image digest |
+| `1.3.6.1.4.1.65230.5.4.1` | SHA-256 of the report signing public key |
+| `1.3.6.1.4.1.65230.5.4.2` | the live ledger root |
 
 The signing key extension is the load-bearing one. A report, a
 checkpoint and an alert are all signed with that key, so binding it to
