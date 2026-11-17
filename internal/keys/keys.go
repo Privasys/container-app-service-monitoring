@@ -155,11 +155,71 @@ func (m *Material) ClockKey() (ed25519.PrivateKey, error) {
 // checkCommitmentKey records, and thereafter enforces, which key this
 // store belongs to.
 func (m *Material) checkCommitmentKey(ck [32]byte) error {
+	return checkKeyFile(filepath.Join(m.Dir, "ck.check"), ck)
+}
+
+// Fingerprint is the value committed to the RA-TLS leaf so a verifying
+// client can confirm the register was given exactly the commitment key
+// the deployer delivered, without the key itself ever leaving the
+// enclave.
+func Fingerprint(ck [32]byte) []byte {
+	sum := sha256.Sum256(append([]byte("monitor/ck-fingerprint/v1"), ck[:]...))
+	return sum[:]
+}
+
+// TenantKeys are the keys of one tenant's record and credential vault.
+type TenantKeys struct {
+	// Commitment opens the tenant's ledger.
+	Commitment [32]byte
+	// Vault seals the tenant's credentials.
+	Vault [32]byte
+}
+
+// TenantKeys derives the keys of one tenant from the sealed master
+// secret, and checks the commitment key against the one the tenant's
+// store was created with.
+//
+// Each tenant gets keys of its own rather than sharing the instance's,
+// so nothing written for one app opens under another app's key: a
+// credential one team delivered cannot be unsealed by a journey that
+// belongs to somebody else, even through a bug that confused the two.
+// The derivation is deterministic, so the same approved build on the
+// same volume reopens every tenant after a restart without anything
+// being delivered. The check value is written in dir, beside the
+// tenant's record.
+func (m *Material) TenantKeys(tenant, dir string) (*TenantKeys, error) {
+	if tenant == "" {
+		return nil, errors.New("keys: a tenant key needs a tenant")
+	}
+	out := &TenantKeys{}
+	for _, k := range []struct {
+		label string
+		dst   *[32]byte
+	}{
+		{"commitment-key", &out.Commitment},
+		{"vault-key", &out.Vault},
+	} {
+		derived, err := hkdf.Key(sha256.New, m.Master[:], nil, "monitor/tenant/"+tenant+"/"+k.label+"/v1", 32)
+		if err != nil {
+			return nil, fmt.Errorf("keys: derive %s for tenant %s: %w", k.label, tenant, err)
+		}
+		copy(k.dst[:], derived)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("keys: %w", err)
+	}
+	if err := checkKeyFile(filepath.Join(dir, "ck.check"), out.Commitment); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// checkKeyFile records, and thereafter enforces, which commitment key a
+// store belongs to.
+func checkKeyFile(path string, ck [32]byte) error {
 	mac := hmac.New(sha256.New, ck[:])
 	mac.Write([]byte("monitor/ck-check/v1"))
 	want := mac.Sum(nil)
-
-	path := filepath.Join(m.Dir, "ck.check")
 	have, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -172,13 +232,4 @@ func (m *Material) checkCommitmentKey(ck [32]byte) error {
 			"the store is intact, the key is wrong")
 	}
 	return nil
-}
-
-// Fingerprint is the value committed to the RA-TLS leaf so a verifying
-// client can confirm the register was given exactly the commitment key
-// the deployer delivered, without the key itself ever leaving the
-// enclave.
-func Fingerprint(ck [32]byte) []byte {
-	sum := sha256.Sum256(append([]byte("monitor/ck-fingerprint/v1"), ck[:]...))
-	return sum[:]
 }

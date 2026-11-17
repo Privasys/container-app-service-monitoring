@@ -95,9 +95,22 @@ type Principal struct {
 // acting role, when given, must be one the caller actually holds.
 func (m *Model) Resolve(id *Identity, tenant, requestedRole string) (*Principal, error) {
 	held := map[string]bool{}
+	// An app-scoped identity-provider role names the app it is about. It
+	// is matched against a declaration only for that app: the app's id
+	// is swapped for the "{app}" placeholder when, and only when, it is
+	// the tenant this request is resolved against.
+	scoped := ""
+	if key := AppKey(tenant); key != "" {
+		scoped = ":app:" + key + ":"
+	}
 	for _, r := range id.Roles {
 		for _, name := range m.byRole[r] {
 			held[name] = true
+		}
+		if scoped != "" && strings.Contains(r, scoped) {
+			for _, name := range m.byRole[strings.Replace(r, scoped, ":app:{app}:", 1)] {
+				held[name] = true
+			}
 		}
 	}
 	if len(held) == 0 {
@@ -179,4 +192,21 @@ func (p *Principal) Permissions() []string {
 // Describe renders the principal for a log line.
 func (p *Principal) Describe() string {
 	return fmt.Sprintf("%s as %s (%s)", p.Sub, p.Acting, strings.Join(p.Roles, ","))
+}
+
+// AppKey is how the platform writes an app's id inside a role: the UUID
+// in lower-case hex without its dashes. It is empty for a tenant that is
+// not an app id, such as the platform's own tenant, so app-scoped roles
+// never match there.
+func AppKey(tenant string) string {
+	s := strings.ToLower(strings.ReplaceAll(tenant, "-", ""))
+	if len(s) != 32 {
+		return ""
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return ""
+		}
+	}
+	return s
 }

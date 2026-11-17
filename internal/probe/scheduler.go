@@ -50,6 +50,11 @@ type Scheduler struct {
 	CheckpointInterval time.Duration
 	// RetentionInterval is how often the retention policy runs.
 	RetentionInterval time.Duration
+	// Shared, when set, is a limit every scheduler of the instance draws
+	// from as well as its own Workers. On the shared platform instance
+	// each app has a scheduler of its own; this keeps one app with many
+	// slow journeys from taking every slot the machine has.
+	Shared chan struct{}
 
 	mu       sync.Mutex
 	monitors []model.Monitor
@@ -137,10 +142,32 @@ func (s *Scheduler) tick(ctx context.Context, now int64) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if s.Shared != nil {
+				select {
+				case s.Shared <- struct{}{}:
+					defer func() { <-s.Shared }()
+				case <-ctx.Done():
+					return
+				}
+			}
 			results[i] = s.run(ctx, mon, now, underMaintenance[mon.ComponentID] || blanket, false)
 		}(i, due[i])
 	}
 	wg.Wait()
+
+	// A journey that never got a slot before shutdown has no reading. It
+	// is left out rather than recorded as an empty one: the boot after
+	// this records the gap, which is what actually happened.
+	taken := results[:0]
+	for _, r := range results {
+		if r.MonitorID != "" {
+			taken = append(taken, r)
+		}
+	}
+	results = taken
+	if len(results) == 0 {
+		return
+	}
 
 	if _, _, err := s.mon.RecordSamples(results); err != nil {
 		s.log.Error("could not record the readings", "error", err, "count", len(results))

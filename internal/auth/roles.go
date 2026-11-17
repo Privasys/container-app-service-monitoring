@@ -107,3 +107,72 @@ func System(tenant string) *Principal {
 func (p *Principal) Author() model.Author {
 	return model.Author{Sub: p.Sub, Display: p.Display, Role: p.Acting}
 }
+
+// The role model of an app's tenant on the shared platform instance.
+//
+// The platform's sign-in already carries a person's role on each app,
+// as "privasys-platform:app:<app id>:<tier>", synced there by the
+// control plane on every team change. "{app}" in these declarations is
+// filled with the id of the app a request is about, so a role on one
+// app grants nothing on another. Global roles such as monitoring:owner
+// are deliberately absent: on the shared instance they would reach
+// every app. The one global role is the Privasys platform's own
+// administrator, who is super admin everywhere.
+const (
+	RolePlatformAdmin = "platform-admin"
+	RoleAppAdmin      = "app-admin"
+	RoleAppMember     = "app-member"
+	RoleAppViewer     = "app-viewer"
+
+	// OIDCPlatformAdmin is the control plane's administrator role.
+	OIDCPlatformAdmin = "privasys-platform:admin"
+)
+
+// AppRoles is the role model of an app tenant.
+var AppRoles = []RoleSpec{
+	{
+		Name: RolePlatformAdmin, Title: "Privasys",
+		OIDCRoles: []string{OIDCPlatformAdmin},
+		Permissions: []string{
+			PermModel, PermSecrets, PermRun, PermRespond, PermMaintenance,
+			PermExplorer, PermProofs, PermCheckpoints, PermReports, PermRetention, PermAdmin,
+		},
+		PII: true,
+	},
+	{
+		// The app's owners and admins in the portal, and the people they
+		// make support admins.
+		Name: RoleAppAdmin, Title: "Support admin",
+		OIDCRoles: []string{
+			"privasys-platform:app:{app}:owner",
+			"privasys-platform:app:{app}:admin",
+			"privasys-platform:app:{app}:support-admin",
+		},
+		Permissions: []string{
+			PermModel, PermSecrets, PermRun, PermRespond, PermMaintenance,
+			PermExplorer, PermProofs, PermCheckpoints, PermReports, PermAdmin,
+		},
+		PII: true,
+	},
+	{
+		// Responds to incidents and works tickets, cannot change what is
+		// watched or who is on the team.
+		Name: RoleAppMember, Title: "Support member",
+		OIDCRoles: []string{"privasys-platform:app:{app}:support-member"},
+		Permissions: []string{
+			PermRun, PermRespond, PermMaintenance, PermExplorer, PermProofs, PermCheckpoints,
+		},
+		PII: true,
+	},
+	{
+		Name: RoleAppViewer, Title: "Support viewer",
+		OIDCRoles: []string{
+			"privasys-platform:app:{app}:viewer",
+			"privasys-platform:app:{app}:support-viewer",
+		},
+		Permissions: []string{PermExplorer, PermProofs, PermCheckpoints, PermReports},
+	},
+}
+
+// NewAppModel builds the role model of an app tenant.
+func NewAppModel() (*Model, error) { return NewModel(AppRoles) }
