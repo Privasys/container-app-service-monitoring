@@ -40,3 +40,14 @@ func RATLSFactory(id *ratls.EgressIdentity) Factory {
 		return platform, poller
 	}
 }
+
+// IdentityFrom adapts the container's attested identity to the headers a
+// control-plane call carries, or nil off the platform.
+func IdentityFrom(id *ratls.EgressIdentity) IdentitySource {
+	if id == nil {
+		return nil
+	}
+	return func(_ context.Context, challenge []byte) ([]byte, []byte, error) {
+		return id.HeaderEvidence(challenge)
+	}
+}

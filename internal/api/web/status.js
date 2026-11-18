@@ -16,6 +16,15 @@ const slug = (() => {
   return parts[0] === 'status' && parts[1] ? parts[1] : '';
 })();
 
+// One app's page lives at /apps/<app id>/ on the shared platform
+// instance, and reads that app's data; anywhere else the page reads the
+// instance's own.
+const appId = (() => {
+  const m = location.pathname.match(/^\/apps\/([0-9a-fA-F-]{32,36})\/?/);
+  return m ? m[1] : '';
+})();
+const publicBase = appId ? `/api/v1/public/apps/${encodeURIComponent(appId)}` : '/api/v1/public';
+
 const api = (path) => fetch(path, { headers: { accept: 'application/json' } }).then((r) => {
   if (!r.ok) throw new Error(`${path} answered ${r.status}`);
   return r.json();
@@ -32,7 +41,13 @@ async function load() {
     // The page still renders without it; the verification section will
     // say the key could not be fetched rather than claiming a pass.
   }
-  page = await api(slug ? `/api/v1/public/status/${encodeURIComponent(slug)}` : '/api/v1/public/status');
+  page = await api(slug ? `${publicBase}/status/${encodeURIComponent(slug)}` : `${publicBase}/status`);
+  if (appId) {
+    const atom = document.getElementById('feed-atom');
+    const json = document.getElementById('feed-json');
+    if (atom) atom.href = `${publicBase}/history.atom`;
+    if (json) json.href = `/api/v2/apps/${encodeURIComponent(appId)}/summary.json`;
+  }
   render();
 }
 
@@ -209,7 +224,7 @@ async function verifyDay(component, day, host) {
     for (const width of ['3600', '60']) {
       const params = new URLSearchParams({ from, to, width });
       if (slug) params.set('service', slug);
-      const uptime = await api(`/api/v1/public/uptime/${encodeURIComponent(page.slug)}?${params}`);
+      const uptime = await api(`${publicBase}/uptime/${encodeURIComponent(page.slug)}?${params}`);
       buckets = (uptime.buckets || []).filter((b) => b.component_id === component.id);
       if (buckets.length > 0) break;
     }
@@ -225,7 +240,7 @@ async function verifyDay(component, day, host) {
       : Math.round(((observed.length - down.length) / observed.length) * 1000000);
 
     const target = buckets[0];
-    const bundle = await api(`/api/v1/public/evidence/bucket?monitor=${encodeURIComponent(target.monitor_id)}` +
+    const bundle = await api(`${publicBase}/evidence/bucket?monitor=${encodeURIComponent(target.monitor_id)}` +
       `&width=${target.width}&start=${target.start}`);
     const checks = await window.MonitorVerify.verifyBundle(bundle, publicKey);
 

@@ -230,6 +230,7 @@ func (s *Server) Handler() http.Handler {
 	// The platform clock, absent unless this instance runs it.
 	s.registerClock(mux)
 
+	s.registerPublicApps(mux)
 	registerPages(mux, s)
 
 	return logging(s.log, mux)

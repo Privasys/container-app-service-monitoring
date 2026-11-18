@@ -208,3 +208,59 @@ func TestAppRoutesServeEachAppItsOwnMonitor(t *testing.T) {
 		t.Fatalf("an app owner reached the instance's own record: %d", code)
 	}
 }
+
+func TestAnAppsPublicPageAnswersOnlyOnceItsTeamMakesItPublic(t *testing.T) {
+	srv, host, _ := newAppServer(t)
+	a, err := host.Ensure(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.EnsureStatus(tenancy.App{ID: appA, Name: "checkout", Hostname: "checkout.apps.example"}); err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) int {
+		res, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	paths := []string{
+		"/apps/" + appA + "/",
+		"/apps/" + appA + "/status.js",
+		"/api/v1/public/apps/" + appA + "/status",
+		"/api/v1/public/apps/" + appA + "/checkpoints",
+		"/api/v2/apps/" + appA + "/summary.json",
+	}
+	// Private by default: indistinguishable from an app with no monitor.
+	for _, p := range paths {
+		if code := get(p); code != http.StatusNotFound {
+			t.Fatalf("%s answered %d while the app's status is private", p, code)
+		}
+	}
+	if code := get("/api/v1/public/apps/" + appB + "/status"); code != http.StatusNotFound {
+		t.Fatalf("an app with no monitor answered %d", code)
+	}
+
+	// The team makes it public.
+	p := auth.System(a.ID)
+	p.Grant(auth.PermModel)
+	svc, _ := a.Mon.Service(tenancy.StatusServiceID)
+	svc.Visibility = model.VisibilityPublic
+	if _, _, err := a.Mon.UpsertService(p, *svc, "Publish the status page"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range paths {
+		if code := get(p); code != http.StatusOK {
+			t.Fatalf("%s answered %d once public", p, code)
+		}
+	}
+	code, body := call(t, srv, "GET", "/api/v1/public/apps/"+appA+"/status", "")
+	if code != http.StatusOK || body["service"] == nil {
+		t.Fatalf("status: %d %v", code, body)
+	}
+	if res, _ := http.Get(srv.URL + "/apps/" + appA); res != nil && res.Request.URL.Path != "/apps/"+appA+"/" {
+		t.Fatalf("the page without a trailing slash did not move to it: %s", res.Request.URL.Path)
+	}
+}

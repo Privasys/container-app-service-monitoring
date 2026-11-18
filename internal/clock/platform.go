@@ -257,3 +257,29 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// App is one app as the control plane lists it to the monitor: where it
+// is served and whether it is deployed. Nothing about its owners.
+type App struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	AppType        string `json:"app_type"`
+	Hostname       string `json:"hostname"`
+	Deployed       bool   `json:"deployed"`
+	ContainerState string `json:"container_state,omitempty"`
+}
+
+// Apps lists every app on the platform (the app-status right). complete
+// reports whether the control plane vouched for the list being the whole
+// set, which is what lets a missing app be taken as deleted.
+func (p *Platform) Apps(ctx context.Context) (apps []App, complete bool, err error) {
+	var out struct {
+		Apps     []App `json:"apps"`
+		Complete bool  `json:"complete"`
+	}
+	if _, err := p.do(ctx, http.MethodGet, "/api/v1/platform/apps", nil, &out); err != nil {
+		return nil, false, err
+	}
+	return out.Apps, out.Complete, nil
+}

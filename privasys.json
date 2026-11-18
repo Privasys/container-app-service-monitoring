@@ -466,5 +466,29 @@
         "privacy_url": "https://privasys.org/legal/privacy/",
         "tos_url": "https://privasys.org/legal/terms/",
         "description": "Service availability monitoring that runs inside a confidential VM, so it can be trusted with a working account on the service it watches, and so the record it keeps can be checked rather than believed.\n\nDEEP CHECKS, NOT PINGS\nA monitor here is a journey: log in with a real least-privilege account, do the thing the service level agreement is actually about, assert that the answer is right rather than merely present, and clean up afterwards. That is only safe because of where it runs. Credentials arrive over an attested channel, are sealed to the measurement of this build, and are bound at creation to the hosts they may be sent to, so repointing a monitor cannot exfiltrate the account it was given.\n\nAN AVAILABILITY RECORD NEITHER SIDE CAN REWRITE\nEvery reading, incident, maintenance window and report is a signed transaction in an append-only ledger whose single root attests the whole record. Signed checkpoints are delivered to the customer, so a record restored from an older copy cannot be passed off as the current one, and an auditor can fold the published roots between two anchors with no key at all.\n\nREPORTS THAT RECOMPUTE\nAn SLA report carries the folded readings its arithmetic used. The verifier shipped in the same image recomputes availability, the user-weighted figure, coverage and every objective from that evidence, and refuses a report whose evidence shows downtime the report did not declare. A signed wrong answer fails.\n\nHONEST ABOUT EXCLUSIONS AND ABOUT ITSELF\nA maintenance window records when it was declared, so one entered after the outage it covers reads as exactly that. Monitoring coverage is reported beside availability, and an objective evaluated on too little evidence is reported as indeterminate rather than met: a monitor that was down cannot certify uptime.\n\nA STATUS PAGE YOU CAN CHECK\nThe public page is the familiar shape, with ninety days of uptime bars, incident timelines and scheduled maintenance, plus a JSON surface existing dashboards already parse. It is served from inside the measured image, it names the build that drew it, and any figure on it can be followed to an inclusion proof that the reader's own browser checks.\n\nWHO IT IS FOR\nAnyone who has to commit to a service level and be able to show what happened: suppliers writing an agreement they will be held to, customers who would rather not take a supplier's dashboard on trust, and regulated operations where the availability record is evidence."
+    },
+    "surfaces": {
+        "static": [
+            "/status",
+            "/apps/",
+            "/status.css",
+            "/status.js",
+            "/verify.js"
+        ],
+        "public": [
+            {
+                "method": "GET",
+                "path": "/api/v1/public/"
+            },
+            {
+                "method": "GET",
+                "path": "/api/v2/"
+            },
+            {
+                "method": "GET",
+                "path": "/history.atom"
+            }
+        ],
+        "cors": "*"
     }
 }

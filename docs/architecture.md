@@ -164,8 +164,27 @@ nothing about which apps are.
 
 `POST /api/v1/apps/{app}/enable` creates an app's monitor (the app's
 admins or a platform admin); `DELETE /api/v1/apps/{app}` removes it and
-everything it held (platform admins only, as the platform does when the
-app is deleted); `GET /api/v1/apps` lists them for the platform admins.
+everything it held (platform admins only); `GET /api/v1/apps` lists them
+for the platform admins.
+
+Every five minutes the instance reads the platform's app list from the
+control plane (`GET /api/v1/platform/apps`, as an attested app holding
+the `app-status` right). Each app with a monitor gets a zero-config
+status: a service named after the app, private until its team makes it
+public, one component, and a check that fetches
+`https://<app host>/readiness` every minute. The runtime lets that GET
+through the gateway with no sealed session and it reaches the app
+itself, so any answer below 500, even a 404 from an app with no such
+route, counts as up. The check follows the app's address if it moves.
+An app missing from two complete listings in a row is gone, and its
+monitor is removed with everything it held.
+
+An app's public status page is `/apps/{app}/`, with its data under
+`/api/v1/public/apps/{app}/` and `/api/v2/apps/{app}/`. Until the app's
+team makes a service public, every one of those answers 404, the same
+as for an app with no monitor. The manifest declares these routes as
+`surfaces`, so they are served in the clear and the declaration is part
+of the measured image.
 
 The status page and the explorer are served from inside the measured
 image. A vanity domain in front of this is a redirect, never a proxy:

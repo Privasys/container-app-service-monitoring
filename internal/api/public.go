@@ -34,12 +34,12 @@ func (s *Server) resolveService(r *http.Request) (*model.Service, error) {
 		slug = r.URL.Query().Get("service")
 	}
 	if slug != "" {
-		svc, err := s.mon.ServiceBySlug(slug)
+		svc, err := s.pmon(r).ServiceBySlug(slug)
 		if err != nil {
 			return nil, err
 		}
 		if svc == nil {
-			svc, err = s.mon.Service(slug)
+			svc, err = s.pmon(r).Service(slug)
 			if err != nil {
 				return nil, err
 			}
@@ -49,7 +49,7 @@ func (s *Server) resolveService(r *http.Request) (*model.Service, error) {
 		}
 		return svc, nil
 	}
-	services, err := s.mon.Services()
+	services, err := s.pmon(r).Services()
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (s *Server) resolveService(r *http.Request) (*model.Service, error) {
 }
 
 func (s *Server) publicServices(w http.ResponseWriter, r *http.Request) {
-	services, err := s.mon.Services()
+	services, err := s.pmon(r).Services()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not read the services", err.Error())
 		return
@@ -96,7 +96,7 @@ func (s *Server) page(w http.ResponseWriter, r *http.Request) *core.StatusPage {
 		writePublicJSON(w, http.StatusNotFound, map[string]any{"error": "no public status page"})
 		return nil
 	}
-	page, err := s.mon.Status(svc.ID, time.Now().Unix())
+	page, err := s.pmon(r).Status(svc.ID, time.Now().Unix())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not build the status page", err.Error())
 		return nil
@@ -132,13 +132,13 @@ func (s *Server) publicUptime(w http.ResponseWriter, r *http.Request) {
 	if width == 0 {
 		width = core.WidthHour
 	}
-	buckets, err := s.mon.Buckets(svc.ID, width, from, to)
+	buckets, err := s.pmon(r).Buckets(svc.ID, width, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not read the readings", err.Error())
 		return
 	}
 	root, version := "", uint64(0)
-	if lineage, err := s.mon.Lineage(auth.System(s.mon.Config().Tenant)); err == nil && lineage != nil {
+	if lineage, err := s.pmon(r).Lineage(auth.System(s.pmon(r).Config().Tenant)); err == nil && lineage != nil {
 		root, version = lineage.Root, lineage.Version
 	}
 	writePublicJSON(w, http.StatusOK, map[string]any{
@@ -153,7 +153,7 @@ func (s *Server) publicIncidents(w http.ResponseWriter, r *http.Request) {
 		writePublicJSON(w, http.StatusNotFound, map[string]any{"error": "no public status page"})
 		return
 	}
-	incidents, err := s.mon.Incidents(svc.ID, int64Param(r, "from"), int64Param(r, "to"),
+	incidents, err := s.pmon(r).Incidents(svc.ID, int64Param(r, "from"), int64Param(r, "to"),
 		intParam(r, "limit", 50))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not read the incidents", err.Error())
@@ -179,9 +179,9 @@ func (s *Server) publicBucketEvidence(w http.ResponseWriter, r *http.Request) {
 	// The evidence surface is anonymous by design, and it is a proof
 	// about a public figure. It carries no personal data: a folded
 	// interval is counts and latencies.
-	p := auth.Anonymous(s.mon.Config().Tenant)
+	p := auth.Anonymous(s.pmon(r).Config().Tenant)
 	p.Grant(auth.PermProofs, auth.PermCheckpoints)
-	bundle, err := s.mon.BucketEvidence(p, monitorID, width, start)
+	bundle, err := s.pmon(r).BucketEvidence(p, monitorID, width, start)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "no such interval", err.Error())
 		return
@@ -190,9 +190,9 @@ func (s *Server) publicBucketEvidence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) publicCheckpoints(w http.ResponseWriter, r *http.Request) {
-	p := auth.Anonymous(s.mon.Config().Tenant)
+	p := auth.Anonymous(s.pmon(r).Config().Tenant)
 	p.Grant(auth.PermCheckpoints)
-	checkpoints, err := s.mon.Checkpoints(p, intParam(r, "limit", 50))
+	checkpoints, err := s.pmon(r).Checkpoints(p, intParam(r, "limit", 50))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not read the checkpoints", err.Error())
 		return
@@ -377,7 +377,7 @@ func (s *Server) historyAtom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().Unix()
-	incidents, err := s.mon.Incidents(svc.ID, now-365*86400, now, 50)
+	incidents, err := s.pmon(r).Incidents(svc.ID, now-365*86400, now, 50)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

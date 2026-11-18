@@ -85,6 +85,10 @@ type Options struct {
 	// starts, such as the rollup lag and checkpoint interval it uses for
 	// its own tenant.
 	Configure func(*Tenant)
+	// Changed runs after a tenant is created or removed by the host itself
+	// (an app the platform deleted), so the process can republish the
+	// summary it attests to.
+	Changed func()
 }
 
 // Host holds the app tenants.
@@ -95,6 +99,10 @@ type Host struct {
 
 	mu      sync.Mutex
 	tenants map[string]*Tenant
+	// apps is the control plane's last app list, and missing how many
+	// complete listings in a row have not had each hosted app.
+	apps    map[string]App
+	missing map[string]int
 	ctx     context.Context
 	closed  bool
 }
@@ -111,6 +119,8 @@ func New(opts Options, log *slog.Logger) *Host {
 		opts: opts, log: log,
 		shared:  make(chan struct{}, opts.Shared),
 		tenants: map[string]*Tenant{},
+		apps:    map[string]App{},
+		missing: map[string]int{},
 	}
 }
 

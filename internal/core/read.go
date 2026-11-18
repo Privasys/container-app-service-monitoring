@@ -408,3 +408,14 @@ func sampleFromRow(row store.Row) model.Sample {
 	}
 	return s
 }
+
+// Component reads one component.
+func (m *Monitor) Component(id string) (*model.Component, error) {
+	var out *model.Component
+	err := m.st.Do(func(tx *store.Tx) error {
+		var err error
+		out, err = readComponent(tx, id)
+		return err
+	})
+	return out, err
+}

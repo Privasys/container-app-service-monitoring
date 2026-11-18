@@ -99,6 +99,15 @@ func (s *Server) enableApp(w http.ResponseWriter, r *http.Request) {
 		s.tenantError(w, err)
 		return
 	}
+	// The zero-config status, now rather than at the next listing, when
+	// the platform has already told us where the app is served.
+	if app, ok := s.Tenants.KnownApp(t.ID); ok {
+		if changed, err := t.EnsureStatus(app); err != nil {
+			s.log.Error("could not set an app's zero-config status", "app", t.ID, "error", err)
+		} else if changed {
+			t.Scheduler.Reload()
+		}
+	}
 	if created {
 		s.log.Info("enabled monitoring for an app", "app", t.ID, "by", principal.Sub)
 		if s.TenantsChanged != nil {

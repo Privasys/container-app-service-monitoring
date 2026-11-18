@@ -73,6 +73,24 @@ func registerPages(mux *http.ServeMux, s *Server) {
 		files.ServeHTTP(w, r)
 	})
 
+	// One app's status page, at /apps/{app}/ so its relative assets
+	// resolve under the same prefix. Like the app's data, it is a 404
+	// until the app's team makes a service public.
+	mux.HandleFunc("GET /apps/{app}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /apps/{app}/{$}", s.publicApp(statusPage))
+	mux.HandleFunc("GET /apps/{app}/{asset}", s.publicApp(func(w http.ResponseWriter, r *http.Request) {
+		asset := r.PathValue("asset")
+		if !strings.HasSuffix(asset, ".js") && !strings.HasSuffix(asset, ".css") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		r.URL.Path = "/" + asset
+		files.ServeHTTP(w, r)
+	}))
+
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/status", http.StatusFound)
 	})

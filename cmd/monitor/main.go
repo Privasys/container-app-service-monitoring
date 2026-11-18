@@ -36,6 +36,8 @@ import (
 	// formula.
 	_ "time/tzdata"
 
+	"enclave-os-mini/clients/go/ratls"
+
 	"github.com/Privasys/container-app-service-monitoring/internal/api"
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
 	"github.com/Privasys/container-app-service-monitoring/internal/clock"
@@ -139,8 +141,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	egressID := clock.NewEgressIdentity(cfg.ManagerURL, cfg.ContainerToken)
 	clockSvc := clock.NewService(mon, clock.NewSigner(clockKey), timesource.New(),
-		clock.RATLSFactory(clock.NewEgressIdentity(cfg.ManagerURL, cfg.ContainerToken)), log)
+		clock.RATLSFactory(egressID), log)
 
 	// One monitor per app, beside the instance's own. Each opens its own
 	// record under its own key; nothing here runs until Start.
@@ -148,6 +151,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// republish is set once the context exists; the host calls it after
+	// removing the monitor of an app the platform deleted.
+	republish := func() {}
 	host := tenancy.New(tenancy.Options{
 		Dir: filepath.Join(cfg.DataDir, "tenants"), Material: material,
 		Base: core.Options{
@@ -159,6 +165,7 @@ func run(log *slog.Logger) error {
 			t.Scheduler.RollupLag = cfg.RollupLag
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
 		},
+		Changed: func() { republish() },
 	}, log)
 
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
@@ -172,7 +179,8 @@ func run(log *slog.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	server.TenantsChanged = func() { publishExtensions(ctx, log, manager, mon, material, host) }
+	republish = func() { publishExtensions(ctx, log, manager, mon, material, host) }
+	server.TenantsChanged = republish
 
 	server.Configure = func(document []byte) (any, error) {
 		var req core.ConfigureRequest
@@ -226,6 +234,7 @@ func run(log *slog.Logger) error {
 	if len(host.List()) > 0 {
 		publishExtensions(ctx, log, manager, mon, material, host)
 	}
+	startAppSync(ctx, log, host, mon, egressID)
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", fmt.Sprint(cfg.Port)),
@@ -297,6 +306,39 @@ func publishExtensions(ctx context.Context, log *slog.Logger, manager *platform.
 	if err := manager.PublishRoot(ctx, root); err != nil {
 		log.Error("could not publish the ledger root", "error", err)
 	}
+}
+
+// appSyncInterval is how often the apps' monitors are brought in line
+// with the platform's app list: each app's zero-config check follows its
+// address, and a deleted app's monitor goes.
+const appSyncInterval = 5 * time.Minute
+
+// startAppSync runs the app sync against the control plane the platform
+// clock is configured with, as this attested app. Off the platform, or on
+// an instance without the platform clock, there is no control plane to
+// ask and the apps' monitors keep what they have.
+func startAppSync(ctx context.Context, log *slog.Logger, host *tenancy.Host, mon *core.Monitor, id *ratls.EgressIdentity) {
+	pc := mon.PlatformClockConfig()
+	if pc == nil || pc.ManagementURL == "" || id == nil {
+		log.Info("the apps' monitors are not synced with the platform: no control plane is configured")
+		return
+	}
+	platformAPI := clock.NewPlatform(pc.ManagementURL, clock.IdentityFrom(id), time.Now)
+	source := func(ctx context.Context) ([]tenancy.App, bool, error) {
+		apps, complete, err := platformAPI.Apps(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		out := make([]tenancy.App, 0, len(apps))
+		for _, a := range apps {
+			out = append(out, tenancy.App{
+				ID: a.ID, Name: a.Name, DisplayName: a.DisplayName,
+				AppType: a.AppType, Hostname: a.Hostname, Deployed: a.Deployed,
+			})
+		}
+		return out, complete, nil
+	}
+	go host.RunSync(ctx, source, appSyncInterval)
 }
 
 // publishClockKey commits the platform clock's key to the leaf
