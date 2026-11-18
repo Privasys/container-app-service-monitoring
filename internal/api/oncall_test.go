@@ -142,6 +142,20 @@ func TestOnCallRolesAndWalletAnswers(t *testing.T) {
 		answerToken("other"): {Sub: "bo", Claims: map[string]any{"form_id": "another", "form_digest": digest, "action": "take"}},
 		"plain.access.token": {Sub: "bo", Claims: claims("take")},
 	}}
+	// The wallet confirms the form with the app before showing its buttons.
+	confirm := func(id, dig string) (int, map[string]any) {
+		return send(t, srv, "GET", "/.well-known/privasys/app-form?id="+id+"&digest="+dig, "", nil)
+	}
+	if code, body := confirm(form.ID, digest); code != http.StatusOK || body["open"] != true ||
+		body["form_id"] != form.ID || body["form_digest"] != digest {
+		t.Fatalf("the open form was not confirmed: %d %v", code, body)
+	}
+	if code, _ := confirm(form.ID, "another-digest"); code != http.StatusNotFound {
+		t.Fatalf("a changed form was confirmed: %d", code)
+	}
+	if code, _ := confirm("made-up", digest); code != http.StatusNotFound {
+		t.Fatalf("a form this app never sent was confirmed: %d", code)
+	}
 	post := func(answer string) int {
 		code, _ := send(t, srv, "POST", base+"/answer", "", map[string]any{"form_id": form.ID, "action": "take", "answer": answer})
 		return code
@@ -166,6 +180,10 @@ func TestOnCallRolesAndWalletAnswers(t *testing.T) {
 	}
 	if p := store.Pages(1)[0]; p.State != oncall.PageTaken || p.TakenBy != "bo" {
 		t.Fatalf("page: %+v", p)
+	}
+
+	if code, _ := confirm(form.ID, digest); code != http.StatusNotFound {
+		t.Fatalf("a form already answered is still offered: %d", code)
 	}
 
 	// What the team reads holds no address and no form digests.

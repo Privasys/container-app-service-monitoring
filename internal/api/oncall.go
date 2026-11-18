@@ -36,6 +36,7 @@ func (s *Server) registerOnCall(mux *http.ServeMux) {
 	// The wallet's answer carries its own proof of who answered.
 	mux.HandleFunc("POST "+base+"/answer", s.onCallAnswer)
 	mux.HandleFunc("GET /api/v1/public/mail-certificate", s.mailCertificate)
+	mux.HandleFunc("GET /.well-known/privasys/app-form", s.appFormOpen)
 }
 
 func dispatcher(req *request) (*oncall.Dispatcher, error) {
@@ -211,4 +212,20 @@ func (s *Server) mailCertificate(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writePublicJSON(w, http.StatusOK, s.MailCert)
+}
+
+// appFormOpen answers the wallet's question: is this exact form one this
+// app sent and is still waiting on? A form's id is random and unguessable,
+// and the answer says nothing beyond yes or no.
+func (s *Server) appFormOpen(w http.ResponseWriter, r *http.Request) {
+	id, digest := r.URL.Query().Get("id"), r.URL.Query().Get("digest")
+	if s.Tenants != nil && id != "" && digest != "" {
+		for _, t := range s.Tenants.List() {
+			if t.OnCall != nil && t.OnCall.FormOpen(id, digest) {
+				writeJSON(w, http.StatusOK, map[string]any{"open": true, "form_id": id, "form_digest": digest})
+				return
+			}
+		}
+	}
+	writeError(w, http.StatusNotFound, "this app is not waiting on that form", "")
 }

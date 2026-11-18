@@ -547,3 +547,18 @@ func newID() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
+
+// FormOpen reports whether this app is waiting on the answer to exactly
+// this form. The wallet asks before it offers the buttons, over a channel
+// it attested, so a form the platform made up is never answerable.
+func (d *Dispatcher) FormOpen(formID, digest string) bool {
+	d.Store.mu.Lock()
+	defer d.Store.mu.Unlock()
+	for _, p := range d.Store.st.Pages {
+		s, ok := p.Forms[formID]
+		if ok {
+			return p.State == PageOpen && !s.Declined && s.Digest == digest
+		}
+	}
+	return false
+}
