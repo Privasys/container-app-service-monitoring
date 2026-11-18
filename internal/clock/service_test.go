@@ -250,7 +250,9 @@ func newRigFor(t *testing.T, e Enclave) *rig {
 	r.svc = NewService(mon, signer, r.clock, factory, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	r.svc.Interval = time.Hour // the test drives the rounds itself
 	r.svc.Apply(mon.PlatformClockConfig())
-	t.Cleanup(r.svc.Stop)
+	// Shutdown, not Stop: it also waits for background work (an incident's
+	// follow-up poll) before the record is closed under it.
+	t.Cleanup(r.svc.Shutdown)
 	// Wait for the first round Apply starts.
 	r.waitPolled()
 	r.waitIdle()
