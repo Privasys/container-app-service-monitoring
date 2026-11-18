@@ -283,11 +283,11 @@ func serve(w http.ResponseWriter, h handler, req *request) {
 }
 
 func (s *Server) authenticate(r *http.Request, roles *auth.Model, tenant string) (*auth.Principal, error) {
-	header := r.Header.Get("Authorization")
-	if !strings.HasPrefix(header, "Bearer ") {
+	token, ok := bearerToken(r)
+	if !ok {
 		return nil, errors.New("a bearer token is required")
 	}
-	id, err := s.verifier.Verify(r.Context(), strings.TrimPrefix(header, "Bearer "))
+	id, err := s.verifier.Verify(r.Context(), token)
 	if err != nil {
 		return nil, err
 	}
@@ -404,4 +404,19 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// bearerToken finds the caller's platform token. A direct RA-TLS call
+// carries it as "Authorization: Bearer". A call over the platform's sealed
+// session cannot: there the Authorization header names the session
+// ("PrivasysSession <id>"), and the client sends its token as X-App-Auth,
+// which the runtime passes through to the app inside the sealed channel.
+func bearerToken(r *http.Request) (string, bool) {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer "), true
+	}
+	if t := strings.TrimSpace(r.Header.Get("X-App-Auth")); t != "" {
+		return strings.TrimPrefix(t, "Bearer "), true
+	}
+	return "", false
 }

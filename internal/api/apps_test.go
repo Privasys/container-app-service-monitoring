@@ -312,3 +312,22 @@ func TestTheLandingPageListsOnlyPublishedApps(t *testing.T) {
 		t.Fatalf("index entry: %v", e)
 	}
 }
+
+func TestTheTokenRidesXAppAuthOverASealedSession(t *testing.T) {
+	srv, host, _ := newAppServer(t)
+	if _, err := host.Ensure(appA); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/apps/"+appA+"/me", nil)
+	// What the runtime hands the app inside a sealed session.
+	req.Header.Set("Authorization", "PrivasysSession 0123456789abcdef")
+	req.Header.Set("X-App-Auth", token("ada", "privasys-platform:app:"+keyA+":owner"))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("a sealed-session call with X-App-Auth answered %d", res.StatusCode)
+	}
+}
