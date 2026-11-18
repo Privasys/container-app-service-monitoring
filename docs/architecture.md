@@ -191,6 +191,29 @@ image. A vanity domain in front of this is a redirect, never a proxy:
 the point is that the page a reader runs comes from the build whose
 measurement is in the certificate.
 
+## On-call
+
+Each app's monitor pages its team when a component goes down. A page goes
+to whoever is on call and whoever asked to be told at that hour, then to
+every responder, then to the app's leads, and last to the leads of the
+monitor app itself, who run the platform. Each level has the team's
+chosen time to take it.
+
+A page in the wallet is a form. The wallet offers its buttons only after
+this monitor confirms, over an attested channel, that it has that exact
+form open, and an answer counts only as a token the identity provider
+signed for that form and that person. Every send, failure, answer and
+escalation is kept on the page's record.
+
+What people choose (channels, address, hours, dates away) is personal
+data, so it lives in `oncall.json` in the app's directory rather than in
+the append-only ledger, and each person can remove their own.
+
+Mail goes through Microsoft Graph, authenticated by a two-year certificate
+generated on the sealed volume. Only its public half leaves, at
+`/api/v1/public/mail-certificate`. The monitor app's leads are warned 60
+and 30 days before it expires.
+
 ## Attested extensions
 
 | OID | Value |

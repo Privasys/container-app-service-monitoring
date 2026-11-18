@@ -179,7 +179,7 @@ func run(log *slog.Logger) error {
 		Configure: func(t *tenancy.Tenant) {
 			t.Scheduler.RollupLag = cfg.RollupLag
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
-			wireOnCall(t, log, hostRef, platformAPI, mon, func(ctx context.Context, to, subject, body string) error {
+			wireOnCall(t, log, hostRef, platformAPI, mon, cfg.AppID, func(ctx context.Context, to, subject, body string) error {
 				return mailSender.Send(ctx, cfg.MailFrom, to, subject, body)
 			})
 		},
@@ -266,6 +266,12 @@ func run(log *slog.Logger) error {
 		publishExtensions(ctx, log, manager, mon, material, host)
 	}
 	startAppSync(ctx, log, host, platformAPI)
+	if platformAPI != nil && cfg.AppID != "" {
+		go watchMailCertificate(ctx, log, filepath.Join(cfg.DataDir, "mail"), mailCred, host, platformAPI, cfg.AppID,
+			func(ctx context.Context, to, subject, body string) error {
+				return mailSender.Send(ctx, cfg.MailFrom, to, subject, body)
+			})
+	}
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", fmt.Sprint(cfg.Port)),
@@ -386,7 +392,7 @@ func (w walletNotices) Message(ctx context.Context, sub, _, _ string) (string, e
 
 // wireOnCall gives an app's monitor its paging.
 func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, platformAPI *clock.Platform,
-	mon *core.Monitor, send oncall.Mailer) {
+	mon *core.Monitor, monitorAppID string, send oncall.Mailer) {
 	store, err := oncall.OpenStore(t.Dir())
 	if err != nil {
 		log.Error("could not open an app's on-call data", "app", t.ID, "error", err)
@@ -407,26 +413,108 @@ func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, platfo
 			}
 			return a.Name
 		},
-		Team: func(ctx context.Context) ([]oncall.Member, error) {
-			if platformAPI == nil {
-				return nil, errors.New("no control plane is configured")
-			}
-			team, err := platformAPI.Team(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]oncall.Member, 0, len(team))
-			for _, m := range team {
-				out = append(out, oncall.Member{Sub: m.Sub, Name: m.Name, Role: m.Role})
-			}
-			return out, nil
-		},
+		Team: teamOf(platformAPI, id),
+	}
+	// The monitor app's own team runs the platform: the last people a page
+	// reaches when nobody on the app's team took it.
+	if monitorAppID != "" {
+		d.Platform = teamOf(platformAPI, monitorAppID)
 	}
 	if platformAPI != nil {
 		d.Wallet = walletNotices{platform: platformAPI}
 	}
 	d.Prepare()
 	t.OnCall = d
+}
+
+// teamOf reads an app's team from the control plane.
+func teamOf(platformAPI *clock.Platform, appID string) oncall.TeamSource {
+	return func(ctx context.Context) ([]oncall.Member, error) {
+		if platformAPI == nil {
+			return nil, errors.New("no control plane is configured")
+		}
+		team, err := platformAPI.Team(ctx, appID)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]oncall.Member, 0, len(team))
+		for _, m := range team {
+			out = append(out, oncall.Member{Sub: m.Sub, Name: m.Name, Role: m.Role})
+		}
+		return out, nil
+	}
+}
+
+// watchMailCertificate tells the monitor app's leads when the mail
+// certificate nears its end, 60 and then 30 days ahead. A warning counts as
+// given only once it reached someone, so a failed one is tried again.
+func watchMailCertificate(ctx context.Context, log *slog.Logger, dir string, cred *mail.Credential,
+	host *tenancy.Host, platformAPI *clock.Platform, monitorAppID string, send oncall.Mailer) {
+	check := func() {
+		warned, err := mail.LoadWarned(dir)
+		if err != nil {
+			log.Error("could not read the mail certificate warnings", "error", err)
+			return
+		}
+		days, due := mail.DueWarning(cred.NotAfter(), time.Now(), warned)
+		if !due {
+			return
+		}
+		log.Warn("the mail certificate is nearing its end", "not_after", cred.NotAfter(), "warning_days", days)
+		team, err := teamOf(platformAPI, monitorAppID)(ctx)
+		if err != nil {
+			log.Error("could not read who to warn about the mail certificate", "error", err)
+			return
+		}
+		subject := fmt.Sprintf("The monitor's mail certificate expires within %d days", days)
+		body := fmt.Sprintf("It expires on %s. Upload a new certificate to the app registration before then, or alert emails will stop.",
+			cred.NotAfter().UTC().Format(time.DateOnly))
+		reached := false
+		for _, m := range team {
+			if !m.Lead() {
+				continue
+			}
+			for _, t := range host.List() {
+				if t.OnCall == nil {
+					continue
+				}
+				if to := t.OnCall.Store.Preference(m.Sub).Email; to != "" {
+					if err := send(ctx, to, subject, body); err != nil {
+						log.Error("could not email a mail certificate warning", "error", err)
+					} else {
+						reached = true
+					}
+					break
+				}
+			}
+			if platformAPI != nil {
+				if status, err := platformAPI.Notify(ctx, m.Sub, "app-message", map[string]string{"kind": "reminder", "path": "/"}); err == nil && status == "sent" {
+					reached = true
+				}
+			}
+		}
+		if !reached {
+			log.Error("nobody could be told about the mail certificate")
+			return
+		}
+		if err := mail.SaveWarned(dir, append(warned, days)); err != nil {
+			log.Error("could not record the mail certificate warning", "error", err)
+		}
+	}
+	first := time.NewTimer(10 * time.Minute)
+	defer first.Stop()
+	daily := time.NewTicker(24 * time.Hour)
+	defer daily.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+			check()
+		case <-daily.C:
+			check()
+		}
+	}
 }
 
 // consoleURL is the app's Status tab in the portal of this environment.

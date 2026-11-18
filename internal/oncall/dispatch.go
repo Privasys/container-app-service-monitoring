@@ -38,8 +38,10 @@ type Dispatcher struct {
 	AppID   string
 	AppName func() string
 	Team    TeamSource
-	Wallet  Wallet
-	Mail    Mailer
+	// Platform lists the platform operators' team, the last level of a page.
+	Platform TeamSource
+	Wallet   Wallet
+	Mail     Mailer
 	// Callback is the path on the monitor's host a form's answer comes to.
 	Callback string
 	// ConsoleURL is where a person can see the incident.
@@ -193,6 +195,9 @@ func (d *Dispatcher) sendLevel(ctx context.Context, pageID string) {
 		d.Store.mu.Unlock()
 
 		people := Recipients(level, team, plan, prefs, now)
+		if level == LevelPlatform {
+			people = d.platformLeads(ctx, pageID)
+		}
 		delivered := 0
 		for _, m := range people {
 			pref, ok := prefs[m.Sub]
@@ -210,6 +215,26 @@ func (d *Dispatcher) sendLevel(ctx context.Context, pageID string) {
 			return
 		}
 	}
+}
+
+// platformLeads is who the last level reaches. Without them the page ends
+// as exhausted, and its record says why.
+func (d *Dispatcher) platformLeads(ctx context.Context, pageID string) []Member {
+	if d.Platform == nil {
+		return nil
+	}
+	team, err := d.Platform(ctx)
+	if err != nil {
+		d.note(pageID, "team_unavailable", "", err.Error())
+		return nil
+	}
+	var out []Member
+	for _, m := range team {
+		if m.Lead() {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // deliver sends the page to one person by each channel they chose and

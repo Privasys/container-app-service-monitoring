@@ -281,6 +281,36 @@ func TestDecliningPassesItOnAtOnceAndAnUnreachablePersonIsSkipped(t *testing.T) 
 	}
 }
 
+func TestThePlatformTeamIsTheLastLevel(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, Plan{AckMinutes: 5})
+	h.d.Platform = func(context.Context) ([]Member, error) {
+		return []Member{{Sub: "operator", Role: RoleOwner}, {Sub: "reader", Role: RoleViewer}}, nil
+	}
+	h.d.Open(ctx, "inc", "cmp", "App", "")
+	if len(h.wallet.forms["operator"]) != 0 {
+		t.Fatal("the platform team was paged before the app's own team had its turn")
+	}
+	// With nobody on call the page starts at the team; the leads come next.
+	h.now = h.now.Add(5 * time.Minute)
+	h.d.Tick(ctx)
+	if len(h.wallet.forms["operator"]) != 0 {
+		t.Fatal("the platform team was paged before the app's leads had their turn")
+	}
+	h.now = h.now.Add(5 * time.Minute)
+	h.d.Tick(ctx)
+	if len(h.wallet.forms["operator"]) != 1 || len(h.wallet.forms["reader"]) != 0 {
+		t.Fatalf("the last level should reach the platform's leads: %v", h.wallet.forms)
+	}
+	id, digest := formOf(t, h.wallet.forms["operator"][0])
+	if err := h.d.Answer(ctx, id, "operator", digest, ActionTake); err != nil {
+		t.Fatal(err)
+	}
+	if p := h.d.Store.Pages(1)[0]; p.State != PageTaken || p.TakenBy != "operator" {
+		t.Fatalf("page: %+v", p)
+	}
+}
+
 func TestTheFormStaysInsideTheWalletsVocabulary(t *testing.T) {
 	h := newHarness(t, Plan{})
 	long := strings.Repeat("x", 500) + "‮\nend"

@@ -252,9 +252,10 @@ func (p Plan) OnCall(now time.Time) string {
 
 // Levels of a page. Each is tried in turn until someone takes it.
 const (
-	LevelOnCall = iota // whoever is on call, and whoever asked to be told now
-	LevelTeam          // every responder who is not away
-	LevelLeads         // the leads, away or not
+	LevelOnCall   = iota // whoever is on call, and whoever asked to be told now
+	LevelTeam            // every responder who is not away
+	LevelLeads           // the leads, away or not
+	LevelPlatform        // the platform's own team, when nobody on the app's took it
 	levelCount
 )
 
