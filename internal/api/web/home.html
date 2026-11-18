@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privasys status</title>
+<link rel="stylesheet" href="/status.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1>Status</h1>
+    <p class="muted">
+      Live status of the apps on the Privasys platform whose teams publish it.
+      Each one is watched from inside a confidential VM, and every figure on
+      its page can be checked in your browser against a signed ledger.
+    </p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="banner" class="banner">
+    <span class="dot"></span>
+    <span id="headline">Loading</span>
+  </section>
+
+  <section class="cards">
+    <h2>Apps</h2>
+    <div id="apps"></div>
+    <p id="empty" class="muted" hidden>No app has published its status page yet.</p>
+  </section>
+
+  <section class="cards">
+    <h2>About these pages</h2>
+    <p>
+      An app's team turns monitoring on and chooses whether to publish its
+      page. Each page shows the app's uptime over 90 days, its incidents and
+      the updates its team writes on them, and lets you verify any day's
+      figure against the monitor's append-only ledger. Pages that are not
+      published do not appear here.
+    </p>
+  </section>
+</main>
+
+<footer class="wrap muted">
+  <p>
+    Served from inside a confidential VM by
+    <a href="https://github.com/Privasys/container-app-service-monitoring">container-app-service-monitoring</a>,
+    open source under the AGPL-3.0 licence.
+    <a href="/api/v1/public/apps">JSON</a>.
+  </p>
+</footer>
+
+<script src="/home.js"></script>
+</body>
+</html>

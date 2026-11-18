@@ -6,6 +6,9 @@ package api
 import (
 	"context"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
@@ -70,6 +73,7 @@ func (s *Server) publicAppMonitor(r *http.Request) *core.Monitor {
 
 // registerPublicApps adds the per-app copies of the public routes.
 func (s *Server) registerPublicApps(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/public/apps", s.publicAppIndex)
 	const v1 = "/api/v1/public/apps/{app}"
 	mux.HandleFunc("GET "+v1+"/services", s.publicApp(s.publicServices))
 	mux.HandleFunc("GET "+v1+"/status", s.publicApp(s.publicStatus))
@@ -87,4 +91,40 @@ func (s *Server) registerPublicApps(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v2+"/incidents.json", s.publicApp(s.v2Incidents))
 	mux.HandleFunc("GET "+v2+"/incidents/unresolved.json", s.publicApp(s.v2Unresolved))
 	mux.HandleFunc("GET "+v2+"/scheduled-maintenances.json", s.publicApp(s.v2Maintenance))
+}
+
+// publicAppIndex lists the apps whose teams have published a status page,
+// with where each is now. It is what the landing page and the app store
+// read; an app that has not published is not in it.
+func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
+	type entry struct {
+		App       string `json:"app"`
+		Service   string `json:"service"`
+		Slug      string `json:"slug"`
+		Indicator string `json:"indicator"`
+		Headline  string `json:"headline"`
+		Page      string `json:"page"`
+	}
+	out := []entry{}
+	if s.Tenants != nil {
+		now := time.Now().Unix()
+		for _, t := range s.Tenants.List() {
+			services, err := t.Mon.Services()
+			if err != nil {
+				continue
+			}
+			for _, svc := range services {
+				if svc.Visibility != model.VisibilityPublic {
+					continue
+				}
+				e := entry{App: t.ID, Service: svc.Name, Slug: svc.Slug, Page: "/apps/" + t.ID + "/"}
+				if page, err := t.Mon.Status(svc.ID, now); err == nil && page != nil {
+					e.Indicator, e.Headline = page.Indicator, page.Headline
+				}
+				out = append(out, e)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Service) < strings.ToLower(out[j].Service) })
+	writePublicJSON(w, http.StatusOK, map[string]any{"apps": out})
 }

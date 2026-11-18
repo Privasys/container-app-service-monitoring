@@ -54,7 +54,7 @@ func registerPages(mux *http.ServeMux, s *Server) {
 
 	// The scripts and stylesheets, served at the root so both pages can
 	// reference them the same way.
-	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js"} {
+	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js", "home.js"} {
 		name := asset
 		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=300")
@@ -91,7 +91,6 @@ func registerPages(mux *http.ServeMux, s *Server) {
 		files.ServeHTTP(w, r)
 	}))
 
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/status", http.StatusFound)
-	})
+	// The landing page: the apps whose teams publish their status.
+	mux.HandleFunc("GET /{$}", serve("home.html"))
 }

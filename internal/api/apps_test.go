@@ -264,3 +264,51 @@ func TestAnAppsPublicPageAnswersOnlyOnceItsTeamMakesItPublic(t *testing.T) {
 		t.Fatalf("the page without a trailing slash did not move to it: %s", res.Request.URL.Path)
 	}
 }
+
+func TestTheLandingPageListsOnlyPublishedApps(t *testing.T) {
+	srv, host, _ := newAppServer(t)
+	for _, id := range []string{appA, appB} {
+		tn, err := host.Ensure(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tn.EnsureStatus(tenancy.App{ID: id, Name: "app-" + id[:4], DisplayName: "App " + id[:4], Hostname: id[:4] + ".apps.example"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("the landing page: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	list := func() []any {
+		code, body := call(t, srv, "GET", "/api/v1/public/apps", "")
+		if code != http.StatusOK {
+			t.Fatalf("index: %d", code)
+		}
+		apps, _ := body["apps"].([]any)
+		return apps
+	}
+	if n := len(list()); n != 0 {
+		t.Fatalf("the index lists %d unpublished apps", n)
+	}
+	a, _ := host.Get(appA)
+	p := auth.System(a.ID)
+	p.Grant(auth.PermModel)
+	svc, _ := a.Mon.Service(tenancy.StatusServiceID)
+	svc.Visibility = model.VisibilityPublic
+	if _, _, err := a.Mon.UpsertService(p, *svc, "Publish"); err != nil {
+		t.Fatal(err)
+	}
+	apps := list()
+	if len(apps) != 1 {
+		t.Fatalf("expected app A only, got %v", apps)
+	}
+	e := apps[0].(map[string]any)
+	if e["app"] != appA || e["page"] != "/apps/"+appA+"/" || e["service"] != "App 0f2c" {
+		t.Fatalf("index entry: %v", e)
+	}
+}

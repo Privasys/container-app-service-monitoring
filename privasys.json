@@ -469,6 +469,8 @@
     },
     "surfaces": {
         "static": [
+            "/",
+            "/home.js",
             "/status",
             "/apps/",
             "/status.css",
