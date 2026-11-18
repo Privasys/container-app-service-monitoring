@@ -6,6 +6,7 @@ package tenancy
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
@@ -97,6 +98,20 @@ func (t *Tenant) EnsureStatus(app App) (bool, error) {
 	mon, err := t.Mon.Monitor(ReachableID)
 	if err != nil {
 		return changed, err
+	}
+	if t.isSelf != nil && t.isSelf(app.Hostname) {
+		// The app is this monitor: the runtime maps a container's own
+		// hostname to loopback, so the check could only ever be refused,
+		// and a monitor cannot report its own outage anyway. The
+		// out-of-band instance watches this one.
+		if mon != nil && mon.Enabled {
+			if _, err := t.Mon.SetMonitorEnabled(p, ReachableID, false,
+				"This app is the monitor itself; it is watched from outside"); err != nil {
+				return changed, err
+			}
+			return true, nil
+		}
+		return changed, nil
 	}
 	if mon != nil && len(mon.Steps) == 1 && mon.Steps[0].URL == url {
 		return changed, nil
@@ -208,4 +223,20 @@ func (h *Host) RunSync(ctx context.Context, source AppSource, interval time.Dura
 		case <-tick.C:
 		}
 	}
+}
+
+// ResolvesToLoopback reports whether every address host resolves to here
+// is a loopback one: what the runtime does with a container's own
+// hostname, so it is how the monitor recognises its own app.
+func ResolvesToLoopback(host string) bool {
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }

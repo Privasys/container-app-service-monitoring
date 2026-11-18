@@ -166,6 +166,7 @@ func run(log *slog.Logger) error {
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
 		},
 		Changed: func() { republish() },
+		IsSelf:  tenancy.ResolvesToLoopback,
 	}, log)
 
 	server := api.NewServer(log, mon, verifier, roles, scheduler)

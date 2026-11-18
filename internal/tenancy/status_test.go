@@ -96,3 +96,36 @@ func TestSyncGivesEachAppItsStatusAndRemovesDeletedApps(t *testing.T) {
 		t.Fatalf("app A was removed although it reappeared between misses: %v", err)
 	}
 }
+
+func TestTheMonitorDoesNotWatchItself(t *testing.T) {
+	dir := t.TempDir()
+	mat, err := keys.Load(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHost(t, dir, mat)
+	h.opts.IsSelf = func(host string) bool { return host == "monitor.apps.example" }
+	if err := h.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	a, err := h.Ensure(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A check made before the monitor knew (an older build) is switched off.
+	if _, err := a.EnsureStatus(App{ID: appA, Name: "monitor", Hostname: "other.apps.example"}); err != nil {
+		t.Fatal(err)
+	}
+	h.Sync([]App{{ID: appA, Name: "monitor", Hostname: "monitor.apps.example"}}, true)
+	mon, _ := a.Mon.Monitor(ReachableID)
+	if mon == nil || mon.Enabled {
+		t.Fatalf("the check on the monitor's own address is still on: %+v", mon)
+	}
+	if svc, _ := a.Mon.Service(StatusServiceID); svc == nil {
+		t.Fatal("the app's status service should still exist")
+	}
+	if !ResolvesToLoopback("localhost") || ResolvesToLoopback("192.0.2.1") {
+		t.Fatal("loopback detection")
+	}
+}

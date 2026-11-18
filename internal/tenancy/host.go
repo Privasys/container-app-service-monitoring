@@ -57,6 +57,8 @@ type Tenant struct {
 	Scheduler *probe.Scheduler
 	Sender    *webhook.Sender
 
+	// isSelf reports whether a hostname is this monitor's own.
+	isSelf func(host string) bool
 	st     *store.Store
 	dir    string
 	cancel context.CancelFunc
@@ -85,6 +87,9 @@ type Options struct {
 	// starts, such as the rollup lag and checkpoint interval it uses for
 	// its own tenant.
 	Configure func(*Tenant)
+	// IsSelf reports whether a hostname is this monitor's own, so the
+	// zero-config check is not pointed at itself. Nil: never.
+	IsSelf func(host string) bool
 	// Changed runs after a tenant is created or removed by the host itself
 	// (an app the platform deleted), so the process can republish the
 	// summary it attests to.
@@ -334,7 +339,7 @@ func (h *Host) open(id string, create bool) (*Tenant, error) {
 		}
 	}
 
-	t := &Tenant{ID: id, Mon: mon, st: st, dir: dir}
+	t := &Tenant{ID: id, Mon: mon, st: st, dir: dir, isSelf: h.opts.IsSelf}
 	t.Scheduler = probe.New(mon, h.log.With("app", id))
 	t.Scheduler.Workers = h.opts.Workers
 	t.Scheduler.Shared = h.shared
