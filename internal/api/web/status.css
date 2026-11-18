@@ -68,13 +68,15 @@ a { color: var(--accent); }
 .status-partial_outage, .status-major_outage { color: var(--bad); }
 
 .bars { display: flex; gap: 2px; margin: 12px 0 6px; height: 32px; }
-.bar { flex: 1; border-radius: 2px; background: var(--ok); min-width: 2px; cursor: pointer; }
+.bar { flex: 1 1 0; border-radius: 2px; background: var(--ok); min-width: 0; cursor: pointer; }
 .bar.partial_outage { background: var(--warn); }
 .bar.major_outage { background: var(--bad); }
 .bar.unknown { background: var(--unknown); }
 .bar-legend { display: flex; font-size: 12px; color: var(--muted); }
 .bar-legend span:last-child { margin-left: auto; }
 .bar-legend .uptime { margin: 0 auto; }
+.bar-legend { gap: 8px; }
+.bar-legend span { white-space: nowrap; }
 
 .incident, .window {
   background: var(--card); border: 1px solid var(--line); border-radius: 10px;

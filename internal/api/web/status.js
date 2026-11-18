@@ -25,6 +25,10 @@ const appId = (() => {
 })();
 const publicBase = appId ? `/api/v1/public/apps/${encodeURIComponent(appId)}` : '/api/v1/public';
 
+// A phone has no room for 90 bars, so it draws the most recent 30.
+const narrow = window.matchMedia('(max-width: 640px)');
+const NARROW_DAYS = 30;
+
 const api = (path) => fetch(path, { headers: { accept: 'application/json' } }).then((r) => {
   if (!r.ok) throw new Error(`${path} answered ${r.status}`);
   return r.json();
@@ -172,7 +176,9 @@ function renderComponents() {
 
     const bars = document.createElement('div');
     bars.className = 'bars';
-    for (const day of c.days || []) {
+    const allDays = c.days || [];
+    const days = narrow.matches ? allDays.slice(-NARROW_DAYS) : allDays;
+    for (const day of days) {
       const bar = document.createElement('div');
       bar.className = `bar ${day.status}`;
       bar.title = day.uptime_ppm < 0
@@ -187,10 +193,12 @@ function renderComponents() {
     const legend = document.createElement('div');
     legend.className = 'bar-legend';
     const first = document.createElement('span');
-    first.textContent = `${(c.days || []).length} days ago`;
+    first.textContent = `${days.length} days ago`;
     const uptime = document.createElement('span');
     uptime.className = 'uptime';
-    uptime.textContent = `${formatPPM(c.uptime_ppm)} uptime`;
+    uptime.textContent = days.length < allDays.length
+      ? `${formatPPM(c.uptime_ppm)} over ${allDays.length} days`
+      : `${formatPPM(c.uptime_ppm)} uptime`;
     const last = document.createElement('span');
     last.textContent = 'today';
     legend.append(first, uptime, last);
@@ -309,3 +317,5 @@ load().catch((err) => {
   $('#headline').textContent = 'The status page could not be loaded';
   $('#updated').textContent = err.message;
 });
+
+narrow.addEventListener('change', () => { if (page) renderComponents(); });
