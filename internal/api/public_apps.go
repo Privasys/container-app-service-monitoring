@@ -12,7 +12,6 @@ import (
 
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
-	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
 
 // One app's public status surface: the same page, JSON and evidence as
@@ -51,8 +50,8 @@ func (s *Server) publicAppMonitor(r *http.Request) *core.Monitor {
 	if s.Tenants == nil {
 		return nil
 	}
-	id, err := tenancy.Canonical(r.PathValue("app"))
-	if err != nil {
+	id, ok := s.Tenants.Resolve(r.PathValue("app"))
+	if !ok {
 		return nil
 	}
 	t, err := s.Tenants.Get(id)
@@ -118,6 +117,9 @@ func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				e := entry{App: t.ID, Service: svc.Name, Slug: svc.Slug, Page: "/apps/" + t.ID + "/"}
+				if known, ok := s.Tenants.KnownApp(t.ID); ok && known.Name != "" {
+					e.Page = "/apps/" + known.Name + "/"
+				}
 				if page, err := t.Mon.Status(svc.ID, now); err == nil && page != nil {
 					e.Indicator, e.Headline = page.Indicator, page.Headline
 				}

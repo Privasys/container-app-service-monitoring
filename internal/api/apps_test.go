@@ -331,3 +331,33 @@ func TestTheTokenRidesXAppAuthOverASealedSession(t *testing.T) {
 		t.Fatalf("a sealed-session call with X-App-Auth answered %d", res.StatusCode)
 	}
 }
+
+func TestAnAppsPublicPageAnswersAtItsPlatformName(t *testing.T) {
+	srv, host, _ := newAppServer(t)
+	a, err := host.Ensure(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.Sync([]tenancy.App{{ID: appA, Name: "checkout", Hostname: "checkout.apps.example"}}, true)
+	p := auth.System(a.ID)
+	p.Grant(auth.PermModel)
+	svc, _ := a.Mon.Service(tenancy.StatusServiceID)
+	svc.Visibility = model.VisibilityPublic
+	if _, _, err := a.Mon.UpsertService(p, *svc, "Publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/apps/checkout/", "/apps/checkout/status.js", "/api/v1/public/apps/checkout/status", "/api/v2/apps/checkout/summary.json"} {
+		res, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s answered %d", path, res.StatusCode)
+		}
+	}
+	_, body := call(t, srv, "GET", "/api/v1/public/apps", "")
+	if e := body["apps"].([]any)[0].(map[string]any); e["page"] != "/apps/checkout/" {
+		t.Fatalf("the index should link by name: %v", e)
+	}
+}

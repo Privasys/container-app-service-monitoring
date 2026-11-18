@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Privasys/container-app-service-monitoring/internal/auth"
 	"github.com/Privasys/container-app-service-monitoring/internal/keys"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
@@ -127,5 +128,40 @@ func TestTheMonitorDoesNotWatchItself(t *testing.T) {
 	}
 	if !ResolvesToLoopback("localhost") || ResolvesToLoopback("192.0.2.1") {
 		t.Fatal("loopback detection")
+	}
+}
+
+func TestAPublicAddressByNameComesFromThePlatformsList(t *testing.T) {
+	dir := t.TempDir()
+	mat, err := keys.Load(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHost(t, dir, mat)
+	if err := h.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	a, err := h.Ensure(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Sync([]App{{ID: appA, Name: "checkout", Hostname: "checkout.apps.example"}}, true)
+	if id, ok := h.Resolve("checkout"); !ok || id != a.ID {
+		t.Fatalf("by name: %q %v", id, ok)
+	}
+	if id, ok := h.Resolve(appA); !ok || id != a.ID {
+		t.Fatalf("by id: %q %v", id, ok)
+	}
+	// A team renaming its service's slug does not gain that address.
+	p := auth.System(a.ID)
+	p.Grant(auth.PermModel)
+	svc, _ := a.Mon.Service(StatusServiceID)
+	svc.Slug = "billing"
+	if _, _, err := a.Mon.UpsertService(p, *svc, "Try another app's address"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.Resolve("billing"); ok {
+		t.Fatal("a service slug claimed a public address")
 	}
 }

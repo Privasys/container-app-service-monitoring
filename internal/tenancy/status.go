@@ -206,21 +206,44 @@ func (h *Host) KnownApp(appID string) (App, bool) {
 	return a, ok
 }
 
+// Resolve turns what a public address names, an app id or the app's
+// platform name, into the app's id. Names come only from the control
+// plane's list, never from a service's slug: a team can edit its slug, and
+// must not be able to answer at another app's address.
+func (h *Host) Resolve(idOrName string) (string, bool) {
+	if id, err := Canonical(idOrName); err == nil {
+		return id, true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, a := range h.apps {
+		if a.Name != "" && a.Name == idOrName {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// syncRetry is how soon a failed listing is tried again. The first one
+// after a deploy is refused until the control plane marks the deployment
+// active, and addresses by name do not resolve until a listing succeeds.
+const syncRetry = 30 * time.Second
+
 // RunSync lists the apps every interval until ctx ends, starting now.
 func (h *Host) RunSync(ctx context.Context, source AppSource, interval time.Duration) {
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
 	for {
+		wait := interval
 		apps, complete, err := source(ctx)
 		if err != nil {
 			h.log.Error("could not list the platform's apps", "error", err)
+			wait = syncRetry
 		} else {
 			h.Sync(apps, complete)
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-time.After(wait):
 		}
 	}
 }

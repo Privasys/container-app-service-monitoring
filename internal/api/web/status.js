@@ -16,11 +16,11 @@ const slug = (() => {
   return parts[0] === 'status' && parts[1] ? parts[1] : '';
 })();
 
-// One app's page lives at /apps/<app id>/ on the shared platform
+// One app's page lives at /apps/<app id or name>/ on the shared platform
 // instance, and reads that app's data; anywhere else the page reads the
 // instance's own.
 const appId = (() => {
-  const m = location.pathname.match(/^\/apps\/([0-9a-fA-F-]{32,36})\/?/);
+  const m = location.pathname.match(/^\/apps\/([^/]+)\/?/);
   return m ? m[1] : '';
 })();
 const publicBase = appId ? `/api/v1/public/apps/${encodeURIComponent(appId)}` : '/api/v1/public';
