@@ -226,12 +226,13 @@ func (h *Host) Close() {
 }
 
 // Roots summarises every tenant's current state as one digest: SHA-256
-// over the sorted "app id, root, version" lines. It is what the instance
-// publishes beside its own root, so a handshake pins the state of every
-// app's record at once. Each app's own root and proofs come from that
-// app's checkpoints.
-func (h *Host) Roots() (string, error) {
-	var lines []string
+// over the sorted "app id, root, version" lines, joined by newlines,
+// with any extra lines the caller adds (the instance's own record). It
+// is what the instance publishes as its ledger root, so a handshake pins
+// the state of every app's record at once. Each app's own root and
+// proofs come from that app's checkpoints.
+func (h *Host) Roots(extra ...string) (string, error) {
+	lines := append([]string(nil), extra...)
 	for _, t := range h.List() {
 		lineage, err := t.Mon.Lineage(auth.System(t.ID))
 		if err != nil {

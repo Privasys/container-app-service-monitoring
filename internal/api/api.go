@@ -32,6 +32,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/clock"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
+	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
 
 // Lifecycle states, which the platform's freeze gate makes visible: the
@@ -69,6 +70,16 @@ type Server struct {
 	// Clock is the platform clock. It is present on every instance and
 	// switched on only by a configure call that asks for it.
 	Clock *clock.Service
+
+	// Tenants holds one monitor per app, on the shared platform
+	// instance. Nil on an instance that watches one service only.
+	Tenants *tenancy.Host
+	// AppRoles is the role model app-scoped requests resolve against:
+	// the portal's team roles for that app, and the platform admins.
+	AppRoles *auth.Model
+	// TenantsChanged runs after an app's monitor is created or removed,
+	// so the process can republish the summary it attests to.
+	TenantsChanged func()
 }
 
 // NewServer builds the surface.
@@ -137,74 +148,84 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/public/evidence/bucket", s.publicBucketEvidence)
 	mux.HandleFunc("GET /api/v1/public/checkpoints", s.publicCheckpoints)
 
-	// The authenticated API.
-	mux.HandleFunc("GET /api/v1/status", s.wrap(s.status))
-	mux.HandleFunc("GET /api/v1/me", s.wrap(s.me))
-	mux.HandleFunc("GET /api/v1/services", s.wrap(s.listServices))
-	mux.HandleFunc("POST /api/v1/services", s.wrap(s.upsertService))
-	mux.HandleFunc("GET /api/v1/services/{id}", s.wrap(s.getService))
-	mux.HandleFunc("GET /api/v1/services/{id}/components", s.wrap(s.listComponents))
-	mux.HandleFunc("POST /api/v1/components", s.wrap(s.upsertComponent))
-	mux.HandleFunc("GET /api/v1/monitors", s.wrap(s.listMonitors))
-	mux.HandleFunc("POST /api/v1/monitors", s.wrap(s.upsertMonitor))
-	mux.HandleFunc("GET /api/v1/monitors/{id}", s.wrap(s.getMonitor))
-	mux.HandleFunc("POST /api/v1/monitors/{id}/run", s.wrap(s.runMonitor))
-	mux.HandleFunc("POST /api/v1/monitors/{id}/enabled", s.wrap(s.setMonitorEnabled))
-	mux.HandleFunc("POST /api/v1/schedules", s.wrap(s.upsertSchedule))
-	mux.HandleFunc("POST /api/v1/objectives", s.wrap(s.upsertObjective))
+	// The authenticated API. Every route is served twice: at its own
+	// path for the instance's tenant, and under /api/v1/apps/{app}/ for
+	// one app's monitor on the shared platform instance.
+	authed := func(method, path string, h handler) {
+		mux.HandleFunc(method+" "+path, s.wrap(h))
+		mux.HandleFunc(method+" "+appPath(path), s.wrapApp(h))
+	}
+	mux.HandleFunc("GET /api/v1/apps", s.listApps)
+	mux.HandleFunc("POST /api/v1/apps/{app}/enable", s.enableApp)
+	mux.HandleFunc("DELETE /api/v1/apps/{app}", s.removeApp)
 
-	mux.HandleFunc("GET /api/v1/samples", s.wrap(s.listSamples))
-	mux.HandleFunc("GET /api/v1/buckets", s.wrap(s.listBuckets))
-	mux.HandleFunc("GET /api/v1/captures", s.wrap(s.listCaptures))
-	mux.HandleFunc("GET /api/v1/screenshots/{digest}", s.wrap(s.getScreenshot))
-	mux.HandleFunc("POST /api/v1/monitors/{id}/baseline", s.wrap(s.approveBaseline))
+	authed("GET", "/api/v1/status", s.status)
+	authed("GET", "/api/v1/me", s.me)
+	authed("GET", "/api/v1/services", s.listServices)
+	authed("POST", "/api/v1/services", s.upsertService)
+	authed("GET", "/api/v1/services/{id}", s.getService)
+	authed("GET", "/api/v1/services/{id}/components", s.listComponents)
+	authed("POST", "/api/v1/components", s.upsertComponent)
+	authed("GET", "/api/v1/monitors", s.listMonitors)
+	authed("POST", "/api/v1/monitors", s.upsertMonitor)
+	authed("GET", "/api/v1/monitors/{id}", s.getMonitor)
+	authed("POST", "/api/v1/monitors/{id}/run", s.runMonitor)
+	authed("POST", "/api/v1/monitors/{id}/enabled", s.setMonitorEnabled)
+	authed("POST", "/api/v1/schedules", s.upsertSchedule)
+	authed("POST", "/api/v1/objectives", s.upsertObjective)
 
-	mux.HandleFunc("GET /api/v1/incidents", s.wrap(s.listIncidents))
-	mux.HandleFunc("POST /api/v1/incidents", s.wrap(s.openIncident))
-	mux.HandleFunc("GET /api/v1/incidents/{id}", s.wrap(s.getIncident))
-	mux.HandleFunc("POST /api/v1/incidents/{id}/updates", s.wrap(s.updateIncident))
+	authed("GET", "/api/v1/samples", s.listSamples)
+	authed("GET", "/api/v1/buckets", s.listBuckets)
+	authed("GET", "/api/v1/captures", s.listCaptures)
+	authed("GET", "/api/v1/screenshots/{digest}", s.getScreenshot)
+	authed("POST", "/api/v1/monitors/{id}/baseline", s.approveBaseline)
 
-	mux.HandleFunc("GET /api/v1/maintenance", s.wrap(s.listMaintenance))
-	mux.HandleFunc("POST /api/v1/maintenance", s.wrap(s.declareMaintenance))
-	mux.HandleFunc("POST /api/v1/maintenance/{id}/cancel", s.wrap(s.cancelMaintenance))
+	authed("GET", "/api/v1/incidents", s.listIncidents)
+	authed("POST", "/api/v1/incidents", s.openIncident)
+	authed("GET", "/api/v1/incidents/{id}", s.getIncident)
+	authed("POST", "/api/v1/incidents/{id}/updates", s.updateIncident)
 
-	mux.HandleFunc("GET /api/v1/secrets", s.wrap(s.listSecrets))
-	mux.HandleFunc("POST /api/v1/secrets", s.wrap(s.putSecret))
-	mux.HandleFunc("DELETE /api/v1/secrets/{name}", s.wrap(s.destroySecret))
+	authed("GET", "/api/v1/maintenance", s.listMaintenance)
+	authed("POST", "/api/v1/maintenance", s.declareMaintenance)
+	authed("POST", "/api/v1/maintenance/{id}/cancel", s.cancelMaintenance)
 
-	mux.HandleFunc("GET /api/v1/reports", s.wrap(s.listReports))
-	mux.HandleFunc("POST /api/v1/reports", s.wrap(s.generateReport))
-	mux.HandleFunc("GET /api/v1/reports/{id}", s.wrap(s.getReport))
+	authed("GET", "/api/v1/secrets", s.listSecrets)
+	authed("POST", "/api/v1/secrets", s.putSecret)
+	authed("DELETE", "/api/v1/secrets/{name}", s.destroySecret)
 
-	mux.HandleFunc("GET /api/v1/log", s.wrap(s.listLog))
-	mux.HandleFunc("GET /api/v1/log/{txid}", s.wrap(s.getTransaction))
-	mux.HandleFunc("GET /api/v1/alerts", s.wrap(s.listAlerts))
-	mux.HandleFunc("GET /api/v1/events", s.wrap(s.listEvents))
+	authed("GET", "/api/v1/reports", s.listReports)
+	authed("POST", "/api/v1/reports", s.generateReport)
+	authed("GET", "/api/v1/reports/{id}", s.getReport)
 
-	mux.HandleFunc("GET /api/v1/checkpoints", s.wrap(s.listCheckpoints))
-	mux.HandleFunc("GET /api/v1/checkpoints/key", s.wrap(s.checkpointKey))
-	mux.HandleFunc("POST /api/v1/checkpoints", s.wrap(s.issueCheckpoint))
-	mux.HandleFunc("GET /api/v1/audit/lineage", s.wrap(s.lineage))
-	mux.HandleFunc("GET /api/v1/audit/roots", s.wrap(s.auditRoots))
+	authed("GET", "/api/v1/log", s.listLog)
+	authed("GET", "/api/v1/log/{txid}", s.getTransaction)
+	authed("GET", "/api/v1/alerts", s.listAlerts)
+	authed("GET", "/api/v1/events", s.listEvents)
 
-	mux.HandleFunc("GET /api/v1/proofs/buckets/{monitor}/{width}/{start}", s.wrap(s.bucketProof))
-	mux.HandleFunc("GET /api/v1/proofs/samples/{id}", s.wrap(s.sampleProof))
+	authed("GET", "/api/v1/checkpoints", s.listCheckpoints)
+	authed("GET", "/api/v1/checkpoints/key", s.checkpointKey)
+	authed("POST", "/api/v1/checkpoints", s.issueCheckpoint)
+	authed("GET", "/api/v1/audit/lineage", s.lineage)
+	authed("GET", "/api/v1/audit/roots", s.auditRoots)
 
-	mux.HandleFunc("POST /api/v1/retention/prune", s.wrap(s.prune))
+	authed("GET", "/api/v1/proofs/buckets/{monitor}/{width}/{start}", s.bucketProof)
+	authed("GET", "/api/v1/proofs/samples/{id}", s.sampleProof)
+
+	authed("POST", "/api/v1/retention/prune", s.prune)
 
 	// The manifest's tools. One surface, driven by the portal, the CLI
 	// and agents alike.
-	mux.HandleFunc("POST /tools/status", s.wrap(s.toolStatus))
-	mux.HandleFunc("POST /tools/monitors", s.wrap(s.toolMonitors))
-	mux.HandleFunc("POST /tools/services", s.wrap(s.toolServices))
-	mux.HandleFunc("POST /tools/put_secret", s.wrap(s.putSecret))
-	mux.HandleFunc("POST /tools/upsert_monitor", s.wrap(s.upsertMonitor))
-	mux.HandleFunc("POST /tools/run_check", s.wrap(s.toolRunCheck))
-	mux.HandleFunc("POST /tools/schedule_maintenance", s.wrap(s.declareMaintenance))
-	mux.HandleFunc("POST /tools/incident_update", s.wrap(s.toolIncidentUpdate))
-	mux.HandleFunc("POST /tools/report", s.wrap(s.generateReport))
-	mux.HandleFunc("POST /tools/checkpoint", s.wrap(s.issueCheckpoint))
-	mux.HandleFunc("POST /tools/approve_baseline", s.wrap(s.approveBaseline))
+	authed("POST", "/tools/status", s.toolStatus)
+	authed("POST", "/tools/monitors", s.toolMonitors)
+	authed("POST", "/tools/services", s.toolServices)
+	authed("POST", "/tools/put_secret", s.putSecret)
+	authed("POST", "/tools/upsert_monitor", s.upsertMonitor)
+	authed("POST", "/tools/run_check", s.toolRunCheck)
+	authed("POST", "/tools/schedule_maintenance", s.declareMaintenance)
+	authed("POST", "/tools/incident_update", s.toolIncidentUpdate)
+	authed("POST", "/tools/report", s.generateReport)
+	authed("POST", "/tools/checkpoint", s.issueCheckpoint)
+	authed("POST", "/tools/approve_baseline", s.approveBaseline)
 
 	// The platform clock, absent unless this instance runs it.
 	s.registerClock(mux)
@@ -217,10 +238,11 @@ func (s *Server) Handler() http.Handler {
 // -- request plumbing ------------------------------------------------------
 
 type request struct {
-	w   http.ResponseWriter
-	r   *http.Request
-	mon *core.Monitor
-	p   *auth.Principal
+	w     http.ResponseWriter
+	r     *http.Request
+	mon   *core.Monitor
+	sched *probe.Scheduler
+	p     *auth.Principal
 }
 
 type handler func(*request) (any, error)
@@ -235,26 +257,31 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				"the monitor is "+strings.ReplaceAll(state, "_", " "), failure)
 			return
 		}
-		principal, err := s.authenticate(r)
+		principal, err := s.authenticate(r, s.roles, s.mon.Config().Tenant)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "not authenticated", err.Error())
 			return
 		}
-		result, err := h(&request{w: w, r: r, mon: s.mon, p: principal})
-		if err != nil {
-			status, detail := classify(err)
-			writeError(w, status, err.Error(), detail)
-			return
-		}
-		if result == nil {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
+		serve(w, h, &request{w: w, r: r, mon: s.mon, sched: s.scheduler, p: principal})
 	}
 }
 
-func (s *Server) authenticate(r *http.Request) (*auth.Principal, error) {
+// serve runs a handler and turns its return value into a response.
+func serve(w http.ResponseWriter, h handler, req *request) {
+	result, err := h(req)
+	if err != nil {
+		status, detail := classify(err)
+		writeError(w, status, err.Error(), detail)
+		return
+	}
+	if result == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) authenticate(r *http.Request, roles *auth.Model, tenant string) (*auth.Principal, error) {
 	header := r.Header.Get("Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
 		return nil, errors.New("a bearer token is required")
@@ -267,7 +294,7 @@ func (s *Server) authenticate(r *http.Request) (*auth.Principal, error) {
 	if role == "" {
 		role = r.URL.Query().Get("role")
 	}
-	return s.roles.Resolve(id, s.mon.Config().Tenant, role)
+	return roles.Resolve(id, tenant, role)
 }
 
 // classify maps a core error onto a status code. The core returns plain

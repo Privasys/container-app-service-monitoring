@@ -196,6 +196,12 @@ per-container leaf:
 | `1.3.6.1.4.1.65230.5.4.1` | SHA-256 of the report signing public key |
 | `1.3.6.1.4.1.65230.5.4.2` | the live ledger root |
 
+On an instance that also hosts apps' monitors (below), the ledger root
+extension is instead SHA-256 over the sorted lines `<tenant> <root>
+<version>`, one per record, the instance's own included and joined by
+newlines. A handshake then pins the state of every record at once; each
+app's own root comes from that app's checkpoints.
+
 The signing key extension is the load-bearing one. A report, a
 checkpoint and an alert are all signed with that key, so binding it to
 the measurement means a verifier who checked the certificate knows which
@@ -297,6 +303,7 @@ itself is the thing this one exists to replace.
 | [`internal/availability`](internal/availability) | The arithmetic, as a pure package. |
 | [`internal/core`](internal/core) | Transactions, detection, incidents, reports, anchors. |
 | [`internal/api`](internal/api) | REST, the status page, the explorer. |
+| [`internal/tenancy`](internal/tenancy) | One monitor per app on the shared platform instance. |
 | [`internal/clock`](internal/clock) | The platform clock: NTS time, signed floors, polling over RA-TLS, incidents, quarantine. |
 | [`third_party/siv-go`](third_party/siv-go) | A copy of the AES-SIV library NTS uses, without its assembly. |
 | [`packs/example-saas`](packs/example-saas) | The reference service model. |

@@ -163,14 +163,8 @@ func (s *Server) statusDocument(req *request) (any, error) {
 	if cp, err := req.mon.LatestCheckpoint(); err == nil && cp != nil {
 		body["last_checkpoint"] = cp.Checkpoint
 	}
-	body["egress_allowlist"] = s.egressEntries()
+	body["egress_allowlist"] = req.mon.Engine().Egress.Entries()
 	return body, nil
-}
-
-func (s *Server) egressEntries() []string {
-	// The allowlist is a fact about what this instance may contact, and
-	// an operator should be able to read it without guessing.
-	return s.mon.Engine().Egress.Entries()
 }
 
 func (s *Server) me(req *request) (any, error) {
@@ -307,7 +301,7 @@ func (s *Server) upsertMonitor(req *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.scheduler.Reload()
+	req.sched.Reload()
 	return map[string]any{"monitor": mon, "txid": tr.TxID, "version": mon.Version}, nil
 }
 
@@ -323,7 +317,7 @@ func (s *Server) setMonitorEnabled(req *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.scheduler.Reload()
+	req.sched.Reload()
 	return map[string]any{"txid": tr.TxID, "enabled": body.Enabled}, nil
 }
 
@@ -334,7 +328,7 @@ func (s *Server) runMonitor(req *request) (any, error) {
 	if !req.p.Can("run") {
 		return nil, fmt.Errorf("%s may not run a monitor", req.p.Acting)
 	}
-	sample, err := s.scheduler.RunOnce(req.r.Context(), req.r.PathValue("id"))
+	sample, err := req.sched.RunOnce(req.r.Context(), req.r.PathValue("id"))
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +345,7 @@ func (s *Server) toolRunCheck(req *request) (any, error) {
 	if !req.p.Can("run") {
 		return nil, fmt.Errorf("%s may not run a monitor", req.p.Acting)
 	}
-	sample, err := s.scheduler.RunOnce(req.r.Context(), body.Monitor)
+	sample, err := req.sched.RunOnce(req.r.Context(), body.Monitor)
 	if err != nil {
 		return nil, err
 	}

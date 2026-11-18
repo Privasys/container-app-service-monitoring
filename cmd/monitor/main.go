@@ -50,6 +50,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
+	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 	"github.com/Privasys/container-app-service-monitoring/internal/webhook"
 )
 
@@ -99,7 +100,8 @@ func run(log *slog.Logger) error {
 	}
 
 	egress := journey.NewAllowlist()
-	if !cfg.OnPlatform() && cfg.DevAuth {
+	openEgress := !cfg.OnPlatform() && cfg.DevAuth
+	if openEgress {
 		// A developer's target is whatever they just started. Inside an
 		// enclave the platform credentials are present and this branch is
 		// unreachable, so the allowlist is always closed where it counts.
@@ -140,14 +142,37 @@ func run(log *slog.Logger) error {
 	clockSvc := clock.NewService(mon, clock.NewSigner(clockKey), timesource.New(),
 		clock.RATLSFactory(clock.NewEgressIdentity(cfg.ManagerURL, cfg.ContainerToken)), log)
 
+	// One monitor per app, beside the instance's own. Each opens its own
+	// record under its own key; nothing here runs until Start.
+	appRoles, err := auth.NewAppModel()
+	if err != nil {
+		return err
+	}
+	host := tenancy.New(tenancy.Options{
+		Dir: filepath.Join(cfg.DataDir, "tenants"), Material: material,
+		Base: core.Options{
+			Name: cfg.Name, Vantage: cfg.Vantage, ImageDigest: cfg.ImageDigest,
+			CheckpointInterval: cfg.CheckpointInterval, CommitmentSource: keys.SourceDerived,
+		},
+		PackDir: cfg.PackDir, OpenEgress: openEgress,
+		Configure: func(t *tenancy.Tenant) {
+			t.Scheduler.RollupLag = cfg.RollupLag
+			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
+		},
+	}, log)
+
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
 	server.Version = version
 	server.PackDir = cfg.PackDir
 	server.Manifest = readManifest(log)
 	server.Clock = clockSvc
+	server.Tenants = host
+	server.AppRoles = appRoles
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	server.TenantsChanged = func() { publishExtensions(ctx, log, manager, mon, material, host) }
 
 	server.Configure = func(document []byte) (any, error) {
 		var req core.ConfigureRequest
@@ -161,7 +186,7 @@ func run(log *slog.Logger) error {
 			return nil, err
 		}
 		clockSvc.Apply(mon.PlatformClockConfig())
-		publishExtensions(ctx, log, manager, mon, material)
+		publishExtensions(ctx, log, manager, mon, material, host)
 		publishClockKey(ctx, log, manager, clockSvc)
 		// Start watching what was just configured, rather than at the
 		// scheduler's next reload: that delay would be a coverage gap in
@@ -181,7 +206,7 @@ func run(log *slog.Logger) error {
 			log.Error("could not lift the configure gate", "error", err)
 		}
 		clockSvc.Apply(mon.PlatformClockConfig())
-		publishExtensions(ctx, log, manager, mon, material)
+		publishExtensions(ctx, log, manager, mon, material, host)
 		publishClockKey(ctx, log, manager, clockSvc)
 	} else if cfg.SelfConfigure {
 		if err := selfConfigure(mon, cfg); err != nil {
@@ -194,6 +219,13 @@ func run(log *slog.Logger) error {
 
 	go scheduler.Run(ctx)
 	go sender.Run(ctx)
+
+	if err := host.Start(ctx); err != nil {
+		return err
+	}
+	if len(host.List()) > 0 {
+		publishExtensions(ctx, log, manager, mon, material, host)
+	}
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", fmt.Sprint(cfg.Port)),
@@ -218,6 +250,9 @@ func run(log *slog.Logger) error {
 			log.Error("could not anchor the state on shutdown", "error", err)
 		}
 		_ = srv.Shutdown(shutdown)
+		// The apps' monitors after the server: a request still in
+		// flight may be writing to one of them.
+		host.Close()
 	}()
 
 	log.Info("listening", "port", cfg.Port)
@@ -234,18 +269,33 @@ func run(log *slog.Logger) error {
 // gone after a restart even though the key and the record are not. A
 // client that verifies the certificate to learn which key signed the
 // evidence has to find the extension there every time.
+//
+// The ledger root is the instance's own record's root. On an instance
+// that also hosts apps' monitors it is instead one digest over every
+// record's state, the instance's own included (see tenancy.Host.Roots),
+// so a handshake still pins all of them at once.
 func publishExtensions(ctx context.Context, log *slog.Logger, manager *platform.Manager,
-	mon *core.Monitor, material *keys.Material) {
+	mon *core.Monitor, material *keys.Material, host *tenancy.Host) {
 	if manager == nil {
 		return
 	}
 	if err := manager.PublishSigningKey(ctx, material.PublicKey()); err != nil {
 		log.Error("could not publish the signing key", "error", err)
 	}
-	if lineage, err := mon.Lineage(auth.System(mon.Config().Tenant)); err == nil && lineage != nil {
-		if err := manager.PublishRoot(ctx, lineage.Root); err != nil {
-			log.Error("could not publish the ledger root", "error", err)
+	lineage, err := mon.Lineage(auth.System(mon.Config().Tenant))
+	if err != nil || lineage == nil {
+		return
+	}
+	root := lineage.Root
+	if host != nil && len(host.List()) > 0 {
+		own := fmt.Sprintf("%s %s %d", mon.Config().Tenant, lineage.Root, lineage.Version)
+		if root, err = host.Roots(own); err != nil {
+			log.Error("could not summarise the apps' records", "error", err)
+			return
 		}
+	}
+	if err := manager.PublishRoot(ctx, root); err != nil {
+		log.Error("could not publish the ledger root", "error", err)
 	}
 }
 

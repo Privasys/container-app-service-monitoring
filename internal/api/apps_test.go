@@ -1,0 +1,210 @@
+// Copyright (c) Privasys. All rights reserved.
+// Licensed under the GNU Affero General Public License v3.0. See LICENSE.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+
+	"github.com/Privasys/container-app-service-monitoring/internal/auth"
+	"github.com/Privasys/container-app-service-monitoring/internal/core"
+	"github.com/Privasys/container-app-service-monitoring/internal/journey"
+	"github.com/Privasys/container-app-service-monitoring/internal/keys"
+	"github.com/Privasys/container-app-service-monitoring/internal/model"
+	"github.com/Privasys/container-app-service-monitoring/internal/probe"
+	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
+	"github.com/Privasys/container-app-service-monitoring/internal/store"
+	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
+)
+
+const (
+	appA = "0f2c1d9e-3b4a-4c5d-8e6f-7a8b9c0d1e2f"
+	appB = "11111111-2222-4333-8444-555555555555"
+	keyA = "0f2c1d9e3b4a4c5d8e6f7a8b9c0d1e2f"
+	keyB = "11111111222243338444555555555555"
+)
+
+func newAppServer(t *testing.T) (*httptest.Server, *tenancy.Host, *int) {
+	t.Helper()
+	dir := t.TempDir()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	material, err := keys.Load(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secrets.Open(filepath.Join(dir, "secrets"), material.Master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck, source, err := material.CommitmentKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "record"), ck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	mon := core.New(st, material, vault, journey.NewAllowlist(), core.Options{
+		Name: "test", Vantage: "test", CommitmentSource: source,
+	})
+	if _, err := mon.Configure(auth.System("privasys-platform"), core.ConfigureRequest{Tenant: "privasys-platform"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := auth.NewDefaultModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	appRoles, err := auth.NewAppModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := tenancy.New(tenancy.Options{
+		Dir: filepath.Join(dir, "tenants"), Material: material,
+		Base: core.Options{Name: "test", Vantage: "test"},
+	}, log)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := host.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cancel(); host.Close() })
+
+	s := NewServer(log, mon, auth.DevVerifier{}, roles, probe.New(mon, log))
+	s.Tenants, s.AppRoles = host, appRoles
+	changed := 0
+	s.TenantsChanged = func() { changed++ }
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	return srv, host, &changed
+}
+
+func call(t *testing.T, srv *httptest.Server, method, path, token string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(method, srv.URL+path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	return res.StatusCode, body
+}
+
+func token(sub string, roles ...string) string {
+	t := "dev:" + sub + ":" + sub + ":"
+	for i, r := range roles {
+		if i > 0 {
+			t += ","
+		}
+		t += r
+	}
+	return t
+}
+
+func TestAppRoutesServeEachAppItsOwnMonitor(t *testing.T) {
+	srv, host, changed := newAppServer(t)
+	ownerA := token("ada", "privasys-platform:app:"+keyA+":owner")
+	memberA := token("bo", "privasys-platform:app:"+keyA+":support-member")
+	ownerB := token("cy", "privasys-platform:app:"+keyB+":owner")
+	admin := token("privasys", auth.OIDCPlatformAdmin)
+
+	// Before monitoring is enabled the app's own team is told so; a
+	// stranger is refused before learning anything about the app.
+	if code, _ := call(t, srv, "GET", "/api/v1/apps/"+appA+"/services", ownerA); code != http.StatusNotFound {
+		t.Fatalf("an app without a monitor answered %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/api/v1/apps/"+appA+"/services", ownerB); code != http.StatusUnauthorized {
+		t.Fatalf("another app's owner got %d on app A", code)
+	}
+	if code, _ := call(t, srv, "GET", "/api/v1/apps/not-an-app/services", admin); code != http.StatusBadRequest {
+		t.Fatalf("a malformed app id answered %d", code)
+	}
+
+	// A support member may not turn monitoring on; the owner may.
+	if code, _ := call(t, srv, "POST", "/api/v1/apps/"+appA+"/enable", memberA); code != http.StatusForbidden {
+		t.Fatalf("a member enabled monitoring: %d", code)
+	}
+	code, body := call(t, srv, "POST", "/api/v1/apps/"+appA+"/enable", ownerA)
+	if code != http.StatusOK || body["created"] != true || body["app"] != appA {
+		t.Fatalf("enable: %d %v", code, body)
+	}
+	if code, body := call(t, srv, "POST", "/api/v1/apps/"+appA+"/enable", ownerA); code != http.StatusOK || body["created"] != false {
+		t.Fatalf("enabling twice: %d %v", code, body)
+	}
+	if *changed != 1 {
+		t.Fatalf("the attested summary should be republished once, was %d times", *changed)
+	}
+	if _, body := call(t, srv, "POST", "/api/v1/apps/"+appB+"/enable", ownerB); body["created"] != true {
+		t.Fatalf("enable B: %v", body)
+	}
+
+	// What app A's team adds is visible to app A only.
+	a, err := host.Get(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := auth.System(a.ID)
+	p.Grant(auth.PermModel)
+	if _, _, err := a.Mon.UpsertService(p, model.Service{Name: "Checkout", Timezone: "UTC"}, "Add the service"); err != nil {
+		t.Fatal(err)
+	}
+	count := func(path, tok string) int {
+		code, body := call(t, srv, "GET", path, tok)
+		if code != http.StatusOK {
+			t.Fatalf("%s: %d %v", path, code, body)
+		}
+		list, _ := body["services"].([]any)
+		return len(list)
+	}
+	if n := count("/api/v1/apps/"+appA+"/services", memberA); n != 1 {
+		t.Fatalf("app A's member sees %d services", n)
+	}
+	if n := count("/api/v1/apps/"+appB+"/services", ownerB); n != 0 {
+		t.Fatalf("app B sees app A's services: %d", n)
+	}
+	if n := count("/api/v1/apps/"+appB+"/services", admin); n != 0 {
+		t.Fatalf("the platform admin reading app B sees %d services", n)
+	}
+
+	// The caller is resolved per app.
+	if code, body := call(t, srv, "GET", "/api/v1/apps/"+appA+"/me", memberA); code != http.StatusOK || body["acting"] != auth.RoleAppMember {
+		t.Fatalf("me: %d %v", code, body)
+	}
+
+	// Only a platform admin lists the apps or removes one.
+	if code, _ := call(t, srv, "GET", "/api/v1/apps", ownerA); code != http.StatusUnauthorized {
+		t.Fatalf("an app owner listed every app: %d", code)
+	}
+	if code, body := call(t, srv, "GET", "/api/v1/apps", admin); code != http.StatusOK || len(body["apps"].([]any)) != 2 {
+		t.Fatalf("list: %d %v", code, body)
+	}
+	if code, _ := call(t, srv, "DELETE", "/api/v1/apps/"+appA, ownerA); code != http.StatusForbidden {
+		t.Fatalf("an app owner erased the app's history: %d", code)
+	}
+	if code, _ := call(t, srv, "DELETE", "/api/v1/apps/"+appA, admin); code != http.StatusNoContent {
+		t.Fatalf("remove: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/api/v1/apps/"+appA+"/services", ownerA); code != http.StatusNotFound {
+		t.Fatalf("a removed app still answers: %d", code)
+	}
+
+	// The instance's own routes are unchanged, and app roles do not
+	// reach them.
+	if code, _ := call(t, srv, "GET", "/api/v1/services", ownerB); code != http.StatusUnauthorized {
+		t.Fatalf("an app owner reached the instance's own record: %d", code)
+	}
+}

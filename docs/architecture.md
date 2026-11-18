@@ -134,6 +134,39 @@ This is app-enforced, not kernel-enforced, and the docs say so.
 - **Configure**: gated by the runtime to the app's owners and admins, at
   enclave level, so the application cannot omit the check.
 
+## One monitor per app
+
+The shared platform instance also runs a monitor for each app the
+platform hosts, under `tenants/<app-id>/`. Each has its own record,
+opened under a commitment key derived for that app alone, its own
+credential vault under its own key, and its own outbound allowlist. Only
+the process, the signing key and a limit on concurrent journeys are
+shared. A query that forgot to filter by app has nothing else in the
+database to leak, a report is about one app, and removing an app is
+removing its directory.
+
+Every authenticated route is also served under `/api/v1/apps/{app}/`
+for that app's monitor, with the tools under the same prefix. The caller
+is resolved against that app from the platform token's roles:
+
+| Token role | Role here |
+| --- | --- |
+| `privasys-platform:admin` | platform admin, on every app |
+| `privasys-platform:app:<hex>:owner`, `:admin`, `:support-admin` | app admin |
+| `privasys-platform:app:<hex>:support-member` | app member |
+| `privasys-platform:app:<hex>:viewer`, `:support-viewer` | app viewer |
+
+`<hex>` is the app id in lower-case hex without dashes. A role on one
+app grants nothing on another or on the instance's own record, and the
+instance's own roles grant nothing on an app. The caller is resolved
+before the monitor says whether the app is watched, so a stranger learns
+nothing about which apps are.
+
+`POST /api/v1/apps/{app}/enable` creates an app's monitor (the app's
+admins or a platform admin); `DELETE /api/v1/apps/{app}` removes it and
+everything it held (platform admins only, as the platform does when the
+app is deleted); `GET /api/v1/apps` lists them for the platform admins.
+
 The status page and the explorer are served from inside the measured
 image. A vanity domain in front of this is a redirect, never a proxy:
 the point is that the page a reader runs comes from the build whose
@@ -146,6 +179,12 @@ measurement is in the certificate.
 | `1.3.6.1.4.1.65230.4.2` | the workload image digest, measured by the platform |
 | `1.3.6.1.4.1.65230.5.4.1` | SHA-256 of the report signing public key |
 | `1.3.6.1.4.1.65230.5.4.2` | the live ledger root |
+
+On an instance that also hosts apps' monitors (below), the ledger root
+extension is instead SHA-256 over the sorted lines `<tenant> <root>
+<version>`, one per record, the instance's own included and joined by
+newlines. A handshake then pins the state of every record at once; each
+app's own root comes from that app's checkpoints.
 
 They live in the manager's memory rather than on the volume, so they are
 republished at every boot and after every configure.
