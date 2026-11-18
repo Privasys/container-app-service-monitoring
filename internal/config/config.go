@@ -51,6 +51,9 @@ type Config struct {
 	ContainerName  string
 	ContainerToken string
 	AppID          string
+	// MailTenant and MailClient name the app registration mail is sent
+	// with, and MailFrom the mailbox. They are identifiers, not secrets.
+	MailTenant, MailClient, MailFrom string
 
 	// OIDC issuer and audience for end-user bearer tokens.
 	Issuer   string
@@ -92,6 +95,9 @@ func Load() (*Config, error) {
 		ContainerName:      firstEnv("PRIVASYS_CONTAINER_NAME", "CONTAINER_NAME"),
 		ContainerToken:     firstEnv("PRIVASYS_CONTAINER_TOKEN", "CONTAINER_TOKEN"),
 		AppID:              firstEnv("PRIVASYS_APP_ID", "APP_ID"),
+		MailTenant:         env("MONITOR_MAIL_TENANT_ID", "02d3d585-f530-48bb-86e7-c9e0446c1bb6"),
+		MailClient:         env("MONITOR_MAIL_CLIENT_ID", "1ce729a5-b319-4db3-b833-141b2d5fb633"),
+		MailFrom:           env("MONITOR_MAIL_FROM", "no-reply@monitoring.privasys.org"),
 		Issuer:             env("MONITOR_OIDC_ISSUER", "https://privasys.id"),
 		Audience:           env("MONITOR_OIDC_AUDIENCE", "privasys-platform"),
 		DevAuth:            truthy(os.Getenv("MONITOR_DEV_AUTH")),

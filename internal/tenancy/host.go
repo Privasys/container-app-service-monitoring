@@ -39,6 +39,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/journey"
 	"github.com/Privasys/container-app-service-monitoring/internal/keys"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
+	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
@@ -56,6 +57,8 @@ type Tenant struct {
 	Mon       *core.Monitor
 	Scheduler *probe.Scheduler
 	Sender    *webhook.Sender
+	// OnCall pages the app's team, when the process set it up.
+	OnCall *oncall.Dispatcher
 
 	// isSelf reports whether a hostname is this monitor's own.
 	isSelf func(host string) bool
@@ -344,10 +347,15 @@ func (h *Host) open(id string, create bool) (*Tenant, error) {
 	t.Scheduler.Workers = h.opts.Workers
 	t.Scheduler.Shared = h.shared
 	t.Sender = webhook.New(mon, h.opts.Material.Signer, h.opts.Material.KeyID, egress, h.log.With("app", id))
-	mon.SetHooks(core.Hooks{OnAlert: t.Sender.Enqueue})
 	if h.opts.Configure != nil {
 		h.opts.Configure(t)
 	}
+	mon.SetHooks(core.Hooks{OnAlert: func(a core.Alert) {
+		t.Sender.Enqueue(a)
+		if t.OnCall != nil {
+			t.OnCall.HandleAlert(a)
+		}
+	}})
 	if err := recordBoot(mon); err != nil {
 		h.log.Error("could not record an app's boot", "app", id, "error", err)
 	}
@@ -362,9 +370,16 @@ func (t *Tenant) start(parent context.Context) {
 	ctx, cancel := context.WithCancel(parent)
 	t.cancel = cancel
 	t.done.Add(2)
+	if t.OnCall != nil {
+		t.done.Add(1)
+		go func() { defer t.done.Done(); t.OnCall.Run(ctx) }()
+	}
 	go func() { defer t.done.Done(); t.Scheduler.Run(ctx) }()
 	go func() { defer t.done.Done(); t.Sender.Run(ctx) }()
 }
+
+// Dir is the app's directory on the sealed volume.
+func (t *Tenant) Dir() string { return t.dir }
 
 func (t *Tenant) close() {
 	if t.cancel != nil {

@@ -39,7 +39,7 @@ func (s *Server) wrapApp(h handler) http.HandlerFunc {
 			s.tenantError(w, err)
 			return
 		}
-		serve(w, h, &request{w: w, r: r, mon: t.Mon, sched: t.Scheduler, p: principal})
+		serve(w, h, &request{w: w, r: r, mon: t.Mon, sched: t.Scheduler, p: principal, oncall: t.OnCall})
 	}
 }
 

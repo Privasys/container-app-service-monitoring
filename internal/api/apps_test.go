@@ -33,6 +33,18 @@ const (
 
 func newAppServer(t *testing.T) (*httptest.Server, *tenancy.Host, *int) {
 	t.Helper()
+	srv, host, changed, _ := buildAppServer(t)
+	return srv, host, changed
+}
+
+func newOnCallServer(t *testing.T) (*httptest.Server, *tenancy.Host, *Server) {
+	t.Helper()
+	srv, host, _, s := buildAppServer(t)
+	return srv, host, s
+}
+
+func buildAppServer(t *testing.T) (*httptest.Server, *tenancy.Host, *int, *Server) {
+	t.Helper()
 	dir := t.TempDir()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	material, err := keys.Load(filepath.Join(dir, "keys"))
@@ -85,7 +97,7 @@ func newAppServer(t *testing.T) (*httptest.Server, *tenancy.Host, *int) {
 	s.TenantsChanged = func() { changed++ }
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return srv, host, &changed
+	return srv, host, &changed, s
 }
 
 func call(t *testing.T, srv *httptest.Server, method, path, token string) (int, map[string]any) {

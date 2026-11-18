@@ -31,6 +31,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
 	"github.com/Privasys/container-app-service-monitoring/internal/clock"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
+	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
@@ -80,6 +81,10 @@ type Server struct {
 	// TenantsChanged runs after an app's monitor is created or removed,
 	// so the process can republish the summary it attests to.
 	TenantsChanged func()
+	// FormAnswers verifies the answers people give to pages in their wallet.
+	FormAnswers auth.Verifier
+	// MailCert is the public half of the mail credential, when there is one.
+	MailCert *MailCertificate
 }
 
 // NewServer builds the surface.
@@ -231,6 +236,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerClock(mux)
 
 	s.registerPublicApps(mux)
+	s.registerOnCall(mux)
 	registerPages(mux, s)
 
 	return logging(s.log, mux)
@@ -244,6 +250,8 @@ type request struct {
 	mon   *core.Monitor
 	sched *probe.Scheduler
 	p     *auth.Principal
+	// oncall is the app's paging, on an app route.
+	oncall *oncall.Dispatcher
 }
 
 type handler func(*request) (any, error)

@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,8 +37,6 @@ import (
 	// formula.
 	_ "time/tzdata"
 
-	"enclave-os-mini/clients/go/ratls"
-
 	"github.com/Privasys/container-app-service-monitoring/internal/api"
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
 	"github.com/Privasys/container-app-service-monitoring/internal/clock"
@@ -46,7 +45,9 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/journey"
 	"github.com/Privasys/container-app-service-monitoring/internal/keys"
+	"github.com/Privasys/container-app-service-monitoring/internal/mail"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
+	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/pack"
 	"github.com/Privasys/container-app-service-monitoring/internal/platform"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
@@ -154,6 +155,20 @@ func run(log *slog.Logger) error {
 	// republish is set once the context exists; the host calls it after
 	// removing the monitor of an app the platform deleted.
 	republish := func() {}
+
+	// The mail credential is generated on the sealed volume once. Mail
+	// starts working when its public certificate is on the registration;
+	// until then each attempt is recorded as failed and the wallet still
+	// reaches people.
+	mailCred, err := mail.LoadCredential(filepath.Join(cfg.DataDir, "mail"), time.Now())
+	if err != nil {
+		return err
+	}
+	mailSender := &mail.Sender{TenantID: cfg.MailTenant, ClientID: cfg.MailClient, Credential: mailCred}
+	// platformAPI is set once the configuration is restored, before any
+	// app's monitor opens.
+	var platformAPI *clock.Platform
+	hostRef := new(*tenancy.Host)
 	host := tenancy.New(tenancy.Options{
 		Dir: filepath.Join(cfg.DataDir, "tenants"), Material: material,
 		Base: core.Options{
@@ -164,12 +179,24 @@ func run(log *slog.Logger) error {
 		Configure: func(t *tenancy.Tenant) {
 			t.Scheduler.RollupLag = cfg.RollupLag
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
+			wireOnCall(t, log, hostRef, platformAPI, mon, func(ctx context.Context, to, subject, body string) error {
+				return mailSender.Send(ctx, cfg.MailFrom, to, subject, body)
+			})
 		},
 		Changed: func() { republish() },
 		IsSelf:  tenancy.ResolvesToLoopback,
 	}, log)
 
+	*hostRef = host
+
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
+	server.MailCert = &api.MailCertificate{
+		Certificate: string(mailCred.CertificatePEM()), Thumbprint: mailCred.Thumbprint(),
+		NotAfter: mailCred.NotAfter().UTC().Format(time.RFC3339),
+	}
+	if cfg.AppID != "" && !cfg.DevAuth {
+		server.FormAnswers = auth.NewJWKSVerifier(cfg.Issuer, "app-form:"+cfg.AppID)
+	}
 	server.Version = version
 	server.PackDir = cfg.PackDir
 	server.Manifest = readManifest(log)
@@ -229,13 +256,16 @@ func run(log *slog.Logger) error {
 	go scheduler.Run(ctx)
 	go sender.Run(ctx)
 
+	if pc := mon.PlatformClockConfig(); pc != nil && pc.ManagementURL != "" && egressID != nil {
+		platformAPI = clock.NewPlatform(pc.ManagementURL, clock.IdentityFrom(egressID), time.Now)
+	}
 	if err := host.Start(ctx); err != nil {
 		return err
 	}
 	if len(host.List()) > 0 {
 		publishExtensions(ctx, log, manager, mon, material, host)
 	}
-	startAppSync(ctx, log, host, mon, egressID)
+	startAppSync(ctx, log, host, platformAPI)
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", fmt.Sprint(cfg.Port)),
@@ -318,13 +348,11 @@ const appSyncInterval = 5 * time.Minute
 // clock is configured with, as this attested app. Off the platform, or on
 // an instance without the platform clock, there is no control plane to
 // ask and the apps' monitors keep what they have.
-func startAppSync(ctx context.Context, log *slog.Logger, host *tenancy.Host, mon *core.Monitor, id *ratls.EgressIdentity) {
-	pc := mon.PlatformClockConfig()
-	if pc == nil || pc.ManagementURL == "" || id == nil {
+func startAppSync(ctx context.Context, log *slog.Logger, host *tenancy.Host, platformAPI *clock.Platform) {
+	if platformAPI == nil {
 		log.Info("the apps' monitors are not synced with the platform: no control plane is configured")
 		return
 	}
-	platformAPI := clock.NewPlatform(pc.ManagementURL, clock.IdentityFrom(id), time.Now)
 	source := func(ctx context.Context) ([]tenancy.App, bool, error) {
 		apps, complete, err := platformAPI.Apps(ctx)
 		if err != nil {
@@ -340,6 +368,78 @@ func startAppSync(ctx context.Context, log *slog.Logger, host *tenancy.Host, mon
 		return out, complete, nil
 	}
 	go host.RunSync(ctx, source, appSyncInterval)
+}
+
+// walletNotices puts pages and notices in front of people through the
+// platform, as this attested app.
+type walletNotices struct{ platform *clock.Platform }
+
+func (w walletNotices) Form(ctx context.Context, sub, form string) (string, error) {
+	return w.platform.Notify(ctx, sub, "app-form", map[string]string{"kind": "request", "form": form})
+}
+
+// Message sends a notice. The wallet writes its own words for a notice, so
+// the title and body are for the channels that can carry them.
+func (w walletNotices) Message(ctx context.Context, sub, _, _ string) (string, error) {
+	return w.platform.Notify(ctx, sub, "app-message", map[string]string{"kind": "response", "path": "/"})
+}
+
+// wireOnCall gives an app's monitor its paging.
+func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, platformAPI *clock.Platform,
+	mon *core.Monitor, send oncall.Mailer) {
+	store, err := oncall.OpenStore(t.Dir())
+	if err != nil {
+		log.Error("could not open an app's on-call data", "app", t.ID, "error", err)
+		return
+	}
+	id := t.ID
+	d := &oncall.Dispatcher{
+		Store: store, AppID: id, Mail: send, Log: log.With("app", id),
+		Callback:   "/api/v1/apps/" + id + "/oncall/answer",
+		ConsoleURL: consoleURL(mon, id),
+		AppName: func() string {
+			if *host == nil {
+				return ""
+			}
+			a, _ := (*host).KnownApp(id)
+			if a.DisplayName != "" {
+				return a.DisplayName
+			}
+			return a.Name
+		},
+		Team: func(ctx context.Context) ([]oncall.Member, error) {
+			if platformAPI == nil {
+				return nil, errors.New("no control plane is configured")
+			}
+			team, err := platformAPI.Team(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]oncall.Member, 0, len(team))
+			for _, m := range team {
+				out = append(out, oncall.Member{Sub: m.Sub, Name: m.Name, Role: m.Role})
+			}
+			return out, nil
+		},
+	}
+	if platformAPI != nil {
+		d.Wallet = walletNotices{platform: platformAPI}
+	}
+	d.Prepare()
+	t.OnCall = d
+}
+
+// consoleURL is the app's Status tab in the portal of this environment.
+func consoleURL(mon *core.Monitor, appID string) string {
+	pc := mon.PlatformClockConfig()
+	if pc == nil {
+		return ""
+	}
+	portal := "https://developer.privasys.org"
+	if strings.Contains(pc.ManagementURL, "test") {
+		portal = "https://developer.test.privasys.org"
+	}
+	return portal + "/dashboard/apps/" + appID + "/?tab=status"
 }
 
 // publishClockKey commits the platform clock's key to the leaf

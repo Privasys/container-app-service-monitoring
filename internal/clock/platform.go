@@ -283,3 +283,35 @@ func (p *Platform) Apps(ctx context.Context) (apps []App, complete bool, err err
 	}
 	return out.Apps, out.Complete, nil
 }
+
+// TeamMember is one person on an app's team.
+type TeamMember struct {
+	Sub  string `json:"sub"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// Team lists one app's team and support team (the app-status right).
+func (p *Platform) Team(ctx context.Context, appID string) ([]TeamMember, error) {
+	var out struct {
+		Members []TeamMember `json:"members"`
+	}
+	if _, err := p.do(ctx, http.MethodGet, "/api/v1/platform/apps/"+url.PathEscape(appID)+"/team", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Members, nil
+}
+
+// Notify asks the platform to put a notification in front of a person. It
+// reports what the platform did: "sent", or "no-push-target" for someone
+// with no wallet to reach.
+func (p *Platform) Notify(ctx context.Context, sub, kind string, payload any) (string, error) {
+	var out struct {
+		Status string `json:"status"`
+	}
+	body := map[string]any{"sub": sub, "type": kind, "payload": payload}
+	if _, err := p.do(ctx, http.MethodPost, "/api/v1/notify", body, &out); err != nil {
+		return "", err
+	}
+	return out.Status, nil
+}
