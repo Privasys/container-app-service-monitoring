@@ -197,6 +197,24 @@ func run(log *slog.Logger) error {
 	if cfg.AppID != "" && !cfg.DevAuth {
 		server.FormAnswers = auth.NewJWKSVerifier(cfg.Issuer, "app-form:"+cfg.AppID)
 	}
+	// A ticket reaches someone the way their alerts do: their wallet, and
+	// their email address if they gave the app one.
+	server.TicketNotice = func(ctx context.Context, t *tenancy.Tenant, sub, subject, body string) {
+		if t.OnCall == nil {
+			return
+		}
+		pref := t.OnCall.Store.Preference(sub)
+		if pref.Wallet && t.OnCall.Wallet != nil {
+			if _, err := t.OnCall.Wallet.Message(ctx, sub, subject, body); err != nil {
+				log.Error("could not send a ticket notice to a wallet", "app", t.ID, "error", err)
+			}
+		}
+		if pref.Email != "" {
+			if err := mailSender.Send(ctx, cfg.SupportMailFrom, pref.Email, subject, body); err != nil {
+				log.Error("could not email a ticket notice", "app", t.ID, "error", err)
+			}
+		}
+	}
 	server.Version = version
 	server.PackDir = cfg.PackDir
 	server.Manifest = readManifest(log)

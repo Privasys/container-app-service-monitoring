@@ -43,6 +43,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
+	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 	"github.com/Privasys/container-app-service-monitoring/internal/webhook"
 )
 
@@ -59,6 +60,8 @@ type Tenant struct {
 	Sender    *webhook.Sender
 	// OnCall pages the app's team, when the process set it up.
 	OnCall *oncall.Dispatcher
+	// Tickets is the app's support desk.
+	Tickets *tickets.Store
 
 	// isSelf reports whether a hostname is this monitor's own.
 	isSelf func(host string) bool
@@ -342,7 +345,12 @@ func (h *Host) open(id string, create bool) (*Tenant, error) {
 		}
 	}
 
-	t := &Tenant{ID: id, Mon: mon, st: st, dir: dir, isSelf: h.opts.IsSelf}
+	desk, err := tickets.Open(filepath.Join(dir, "tickets"))
+	if err != nil {
+		st.Close()
+		return nil, err
+	}
+	t := &Tenant{ID: id, Mon: mon, st: st, dir: dir, isSelf: h.opts.IsSelf, Tickets: desk}
 	t.Scheduler = probe.New(mon, h.log.With("app", id))
 	t.Scheduler.Workers = h.opts.Workers
 	t.Scheduler.Shared = h.shared

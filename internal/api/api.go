@@ -18,6 +18,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +86,8 @@ type Server struct {
 	FormAnswers auth.Verifier
 	// MailCert is the public half of the mail credential, when there is one.
 	MailCert *MailCertificate
+	// TicketNotice tells one person about a ticket, by the channels they chose.
+	TicketNotice func(ctx context.Context, t *tenancy.Tenant, sub, subject, body string)
 }
 
 // NewServer builds the surface.
@@ -237,6 +240,7 @@ func (s *Server) Handler() http.Handler {
 
 	s.registerPublicApps(mux)
 	s.registerOnCall(mux)
+	s.registerTickets(mux)
 	registerPages(mux, s)
 
 	return logging(s.log, mux)

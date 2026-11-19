@@ -455,6 +455,108 @@
                 "type": "object",
                 "properties": {}
             }
+        },
+        {
+            "name": "open_ticket",
+            "role": "action",
+            "description": "Open a support ticket with an app's team. Requires signing in; the app must be taking support requests.",
+            "endpoint": "/tools/open_ticket",
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "app",
+                    "subject",
+                    "body"
+                ],
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": "The app this is about: its id or its platform name."
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "A short summary of the problem.",
+                        "maxLength": 200
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "What happened, and what you expected.",
+                        "maxLength": 20000
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "One of the app's support categories, if it has any."
+                    }
+                }
+            }
+        },
+        {
+            "name": "comment",
+            "role": "action",
+            "description": "Add a reply to a support ticket you can see.",
+            "endpoint": "/tools/comment",
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "app",
+                    "ticket",
+                    "body"
+                ],
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": "The app this is about: its id or its platform name."
+                    },
+                    "ticket": {
+                        "type": "string",
+                        "description": "The ticket, for example T-12."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The reply.",
+                        "maxLength": 20000
+                    },
+                    "internal": {
+                        "type": "boolean",
+                        "description": "A note for the app's team only. Team members only."
+                    }
+                }
+            }
+        },
+        {
+            "name": "list_tickets",
+            "role": "status",
+            "description": "List support tickets: your own, or the whole queue if you are on the app's team.",
+            "endpoint": "/tools/list_tickets",
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "app"
+                ],
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": "The app this is about: its id or its platform name."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "new",
+                            "triaged",
+                            "assigned",
+                            "in_progress",
+                            "waiting",
+                            "resolved",
+                            "closed"
+                        ],
+                        "description": "Only tickets in this state."
+                    },
+                    "mine": {
+                        "type": "boolean",
+                        "description": "Only tickets you opened, even if you are on the team."
+                    }
+                }
+            }
         }
     ],
     "store": {
