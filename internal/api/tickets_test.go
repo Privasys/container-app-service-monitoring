@@ -229,6 +229,27 @@ func TestTheSupportSite(t *testing.T) {
 	}
 }
 
+// The runtime removes a Content-Security-Policy header from a public page, so
+// each page must carry its policy in its own markup.
+func TestPublicPagesCarryTheirPolicyInTheMarkup(t *testing.T) {
+	for name, want := range map[string]string{
+		"web/index.html":   "script-src 'self'",
+		"web/home.html":    "script-src 'self'",
+		"web/support.html": "frame-src https://privasys.id",
+	} {
+		raw, err := webFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := string(raw)
+		tag := strings.Index(page, `<meta http-equiv="Content-Security-Policy"`)
+		script := strings.Index(page, "<script")
+		if tag < 0 || script < tag || !strings.Contains(page, want) {
+			t.Errorf("%s does not declare its policy ahead of its scripts", name)
+		}
+	}
+}
+
 func TestTicketLimitsAnswerTooManyRequests(t *testing.T) {
 	srv, host, _ := newAppServer(t)
 	a, err := host.Ensure(appA)
