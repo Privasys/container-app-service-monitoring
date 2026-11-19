@@ -8,30 +8,52 @@
 <link rel="stylesheet" href="/status.css">
 <link rel="stylesheet" href="/support.css">
 </head>
-<body>
-<header class="masthead">
-  <div class="wrap">
-    <h1 id="title">Support</h1>
-    <p id="subtitle" class="muted">Ask an app's team for help.</p>
+<body data-site="support">
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a id="brand" class="brand" href="/"><svg viewBox="0 0 500 500" aria-hidden="true"><path d="M100 0H450L0 450V100A100 100 0 0 1 100 0Z" fill="#34E89E"/><path d="M500 50V400A100 100 0 0 1 400 500H50L500 50Z" fill="#00BCF2"/><polygon points="0,500 50,500 500,50 500,0" fill="#fff"/></svg><span>Privasys</span><span id="brand-product" class="brand-product">Status</span></a>
+    <nav class="topnav" aria-label="Privasys status and support">
+      <a id="nav-status" href="/">Status</a>
+      <a id="nav-support" href="/support/">Support</a>
+      <span id="who" class="who" hidden><span id="who-name"></span><button id="sign-out" type="button" class="small">Sign out</button></span>
+    </nav>
   </div>
 </header>
 
-<main class="wrap">
-  <div id="message" class="notice" role="status" hidden></div>
-  <section id="view" class="cards"></section>
-  <div id="gate"></div>
+<main>
+  <div class="wrap">
+    <div class="masthead">
+      <div class="head-row">
+        <div>
+          <h1 id="title">Support</h1>
+          <p id="subtitle">Ask an app's team for help.</p>
+        </div>
+        <a id="status-link" class="button" href="/" hidden>Service status</a>
+      </div>
+    </div>
+    <div id="message" class="notice" role="status" hidden></div>
+    <section id="view"></section>
+    <div id="gate"></div>
+  </div>
 </main>
 
-<footer class="wrap muted">
-  <p>
-    <a id="status-link" href="/" hidden>Service status</a>
-    Your requests travel encrypted to a confidential VM, and only this app's
-    team can read them. Served by
-    <a href="https://github.com/Privasys/container-app-service-monitoring">container-app-service-monitoring</a>,
-    open source under the AGPL-3.0 licence.
-  </p>
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Watched and served from inside a confidential VM by
+      <a href="https://github.com/Privasys/container-app-service-monitoring">container-app-service-monitoring</a>,
+      open source under the AGPL-3.0 licence. Your requests travel encrypted to that confidential VM, and only the app's team can read them.</p>
+    <nav aria-label="Privasys">
+      <a href="https://privasys.org">Privasys</a>
+      <a href="https://developer.privasys.org">Developer portal</a>
+      <a href="https://store.privasys.org">App Store</a>
+      <a href="https://docs.privasys.org">Docs</a>
+      <a href="https://privasys.org/legal/privacy/">Privacy</a>
+      <a href="https://privasys.org/legal/terms/">Terms</a>
+    </nav>
+  </div>
 </footer>
 
+<script src="/status-nav.js"></script>
 <script src="/privasys-auth-client.iife.js"></script>
 <script src="/support.js"></script>
 </body>

@@ -1,33 +1,58 @@
 /* Copyright (c) Privasys. Licensed under the AGPL-3.0. */
 
-.notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; }
-.notice.error { border-color: var(--bad); color: var(--bad); }
+.notice { margin: 20px 0; padding: 12px 16px; border-radius: 12px; background: var(--info-soft); font-size: 14px; }
+.notice.error { background: var(--bad-soft); color: var(--bad); }
 
-.panel { padding: 18px 20px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 12px; }
-.panel h2 { margin: 0 0 6px; font-size: 17px; color: inherit; text-transform: none; letter-spacing: 0; }
+#view { margin-top: 24px; }
 
-.field { display: block; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.panel h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.panel > p { margin: 4px 0 16px; color: var(--muted); font-size: 14px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.panel-head h2 { margin: 0; }
+
+.sign-in { padding: 32px; text-align: center; }
+.sign-in > p { max-width: 460px; margin: 6px auto 20px; }
+
+.field { display: block; margin: 0 0 16px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .field input, .field select, .field textarea {
-  display: block; box-sizing: border-box; width: 100%; margin-top: 5px; padding: 9px 11px;
-  border: 1px solid var(--line); border-radius: 8px; background: transparent;
-  color: inherit; font: inherit; font-size: 15px;
+  display: block; width: 100%; margin-top: 6px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  color: var(--ink); font: inherit; font-size: 15px;
 }
-.field textarea { min-height: 130px; resize: vertical; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--line); outline-offset: 1px; }
+.field textarea { min-height: 140px; resize: vertical; }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
-.button {
-  padding: 9px 15px; border: 1px solid var(--line); border-radius: 8px; background: transparent;
-  color: inherit; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none;
+.linkish { padding: 0; border: 0; background: none; color: var(--muted); font-size: 14px; font-weight: 500; text-decoration: underline; }
+.linkish:hover { background: none; color: var(--ink); }
+.back { margin-bottom: 14px; }
+
+.ticket-list { margin: 8px -22px -18px; }
+.ticket-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 14px 22px; border: 0; border-top: 1px solid var(--hairline); border-radius: 0;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
-.button.primary { border-color: var(--ok); background: var(--ok); color: #fff; }
-.button:disabled { opacity: 0.5; cursor: default; }
-.linkish { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
-
-.ticket-row { display: block; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.ticket-row:last-child { border-bottom: 0; }
+.ticket-row:hover { background: var(--sunken); text-decoration: none; }
+.ticket-row:last-child { border-radius: 0 0 16px 16px; }
+.ticket-main { flex: 1; min-width: 0; }
 .ticket-subject { font-weight: 600; overflow-wrap: anywhere; }
-.ticket-meta { margin-top: 3px; font-size: 13px; color: var(--muted); }
+.ticket-meta { margin-top: 2px; font-size: 13px; color: var(--muted); }
+.empty { padding: 18px 0 4px; color: var(--muted); font-size: 14px; }
 
-.written { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.reply { margin-top: 12px; padding: 11px 13px; border-left: 2px solid var(--line); }
-.reply.team { border-left-color: var(--ok); }
+.pill { flex: none; padding: 2px 10px; border-radius: 999px; background: var(--sunken); font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.pill.open { background: var(--info-soft); color: var(--link); }
+.pill.waiting { background: var(--warn-soft); color: var(--warn); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+
+.written { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread { margin-top: 18px; }
+.reply { margin-top: 12px; padding: 12px 16px; border-radius: 12px; background: var(--sunken); }
+.reply.team { background: var(--ok-soft); }
+.reply .written { margin-top: 4px; }
+
+@media (max-width: 640px) {
+  .ticket-list { margin: 8px -16px -16px; }
+  .ticket-row { padding: 14px 16px; }
+  .sign-in { padding: 24px 16px; }
+}

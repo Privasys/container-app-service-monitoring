@@ -71,7 +71,7 @@ func registerPages(mux *http.ServeMux, s *Server) {
 
 	// The scripts and stylesheets, served at the root so both pages can
 	// reference them the same way.
-	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js", "home.js", "support.js", "support.css", "privasys-auth-client.iife.js"} {
+	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js", "home.js", "support.js", "support.css", "status-nav.js", "privasys-auth-client.iife.js"} {
 		name := asset
 		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=300")

@@ -10,9 +10,12 @@ const app = (parts[0] === 'support' || parts[0] === 'apps') && parts[1] ? decode
 const onSupportHost = location.hostname.startsWith('support.');
 const isTest = location.hostname.includes('.test.');
 
+// How a request's state reads to the person who opened it, and its colour.
 const STATUS = {
-  new: 'Received', triaged: 'Received', assigned: 'With the team', in_progress: 'With the team',
-  waiting: 'Waiting for your reply', resolved: 'Resolved', closed: 'Closed',
+  new: ['Received', 'open'], triaged: ['Received', 'open'],
+  assigned: ['With the team', 'open'], in_progress: ['With the team', 'open'],
+  waiting: ['Waiting for your reply', 'waiting'],
+  resolved: ['Resolved', 'done'], closed: ['Closed', ''],
 };
 
 let frame = null;
@@ -54,6 +57,21 @@ function field(label, control) {
   return l;
 }
 
+function pill(status) {
+  const [label, tone] = STATUS[status] || [status, ''];
+  return el('span', `pill ${tone}`.trim(), label);
+}
+
+// The person's name, from the token their sign-in gave the page.
+function nameIn(jwt) {
+  try {
+    const claims = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return claims.name || claims.email || '';
+  } catch (err) {
+    return '';
+  }
+}
+
 // call reaches the desk inside the encrypted session. The session carries
 // the channel; the person's token says who is asking.
 async function call(method, path, body) {
@@ -90,25 +108,51 @@ async function landing() {
   const r = await fetch('/api/v1/public/support', { headers: { accept: 'application/json' } });
   const apps = r.ok ? ((await r.json()).apps || []) : [];
   view.replaceChildren();
+  const panel = el('div', 'panel');
+  panel.appendChild(el('h2', '', 'Apps taking requests'));
   if (apps.length === 0) {
-    view.appendChild(el('p', 'muted', 'No app is taking support requests here yet.'));
-    return;
+    panel.appendChild(el('p', 'empty', 'No app is taking support requests here yet.'));
+  } else {
+    const list = el('div', 'ticket-list');
+    for (const a of apps) {
+      const link = el('a', 'ticket-row');
+      link.href = `${onSupportHost ? '/apps' : '/support'}/${encodeURIComponent(a.name || a.app)}/`;
+      const main = el('div', 'ticket-main');
+      main.appendChild(el('div', 'ticket-subject', a.display_name || a.name || a.app));
+      link.appendChild(main);
+      list.appendChild(link);
+    }
+    panel.appendChild(list);
   }
-  for (const a of apps) {
-    const link = el('a', 'ticket-row');
-    link.href = `${onSupportHost ? '/apps' : '/support'}/${encodeURIComponent(a.name || a.app)}/`;
-    link.appendChild(el('div', 'ticket-subject', a.display_name || a.name || a.app));
-    view.appendChild(link);
-  }
+  view.appendChild(panel);
 }
 
 function signInPanel() {
   view.replaceChildren();
-  const p = el('div', 'panel');
+  const p = el('div', 'panel sign-in');
   p.appendChild(el('h2', '', 'Sign in to continue'));
-  p.appendChild(el('p', 'muted', 'Sign in with your Privasys Wallet to open a request and follow the replies.'));
-  p.appendChild(button('Sign in with the Privasys Wallet', 'button primary', signIn));
+  p.appendChild(el('p', '', 'Sign in with your Privasys Wallet to open a request and follow the replies. Your wallet checks this service before anything is sent.'));
+  p.appendChild(button('Sign in with the Privasys Wallet', 'primary', signIn));
   view.appendChild(p);
+}
+
+function showWho() {
+  const name = nameIn(token);
+  $('who-name').textContent = name ? `Signed in as ${name}` : 'Signed in';
+  $('who').hidden = false;
+}
+
+async function signOut() {
+  try {
+    if (frame) await frame.clearSession();
+  } catch (err) {
+    // Signing out of this page still happens below.
+  }
+  sealed = null;
+  token = '';
+  $('who').hidden = true;
+  say('You are signed out.');
+  signInPanel();
 }
 
 async function signIn() {
@@ -131,12 +175,13 @@ async function signIn() {
       });
       frame.onSessionRenewed = (_rp, fresh) => { if (fresh) token = fresh; };
     }
-    view.replaceChildren(el('p', 'muted', 'Waiting for your wallet…'));
+    view.replaceChildren(el('div', 'panel', 'Waiting for your wallet…'));
     const res = await frame.connect();
     $('gate').replaceChildren();
     if (!res.session) throw new Error('Your wallet signed you in, but the encrypted session did not open.');
     sealed = res.session;
     token = res.accessToken;
+    showWho();
     await showList();
   });
   if (!sealed) signInPanel();
@@ -145,28 +190,40 @@ async function signIn() {
 async function showList() {
   const data = await call('GET', desk());
   view.replaceChildren();
-  const bar = el('div', 'actions');
-  bar.appendChild(button('New request', 'button primary', showNew));
-  view.appendChild(bar);
-  const list = el('div', 'panel');
-  list.appendChild(el('h2', '', 'Your requests'));
+  const panel = el('div', 'panel');
+  const head = el('div', 'panel-head');
+  head.append(el('h2', '', 'Your requests'), button('New request', 'primary small', showNew));
+  panel.appendChild(head);
   const rows = data.tickets || [];
-  if (rows.length === 0) list.appendChild(el('p', 'muted', 'You have no requests here yet.'));
-  for (const row of rows) {
-    const t = row.ticket;
-    const b = button('', 'ticket-row', () => attempt(() => showTicket(t.number)));
-    b.appendChild(el('div', 'ticket-subject', `T-${t.number}: ${t.subject}`));
-    b.appendChild(el('div', 'ticket-meta', `${STATUS[t.status] || t.status} · ${when(t.updated_at)}`));
-    list.appendChild(b);
+  if (rows.length === 0) {
+    panel.appendChild(el('p', 'empty', 'You have no requests here yet.'));
+  } else {
+    const list = el('div', 'ticket-list');
+    for (const row of rows) {
+      const t = row.ticket;
+      const b = button('', 'ticket-row', () => attempt(() => showTicket(t.number)));
+      const main = el('div', 'ticket-main');
+      main.appendChild(el('div', 'ticket-subject', t.subject));
+      main.appendChild(el('div', 'ticket-meta', `T-${t.number} · updated ${when(t.updated_at)}`));
+      b.append(main, pill(t.status));
+      list.appendChild(b);
+    }
+    panel.appendChild(list);
   }
-  view.appendChild(list);
+  view.appendChild(panel);
+}
+
+function backLink() {
+  const b = button('← Your requests', 'linkish back', () => attempt(showList));
+  return b;
 }
 
 function showNew() {
   say('');
-  view.replaceChildren();
+  view.replaceChildren(backLink());
   const form = el('form', 'panel');
   form.appendChild(el('h2', '', 'New request'));
+  form.appendChild(el('p', '', 'Describe the problem. The team replies here, and your wallet tells you when they do.'));
   const subject = el('input');
   subject.required = true;
   subject.maxLength = 200;
@@ -183,7 +240,7 @@ function showNew() {
   body.maxLength = 20000;
   form.appendChild(field('What happened, and what did you expect?', body));
   const bar = el('div', 'actions');
-  const send = el('button', 'button primary', 'Send request');
+  const send = el('button', 'primary', 'Send request');
   send.type = 'submit';
   bar.append(send, button('Cancel', 'linkish', () => attempt(showList)));
   form.appendChild(bar);
@@ -204,23 +261,26 @@ function showNew() {
 
 async function showTicket(number) {
   const { ticket: t } = await call('GET', `${desk()}/${number}`);
-  view.replaceChildren();
-  view.appendChild(button('← Your requests', 'linkish', () => attempt(showList)));
+  view.replaceChildren(backLink());
 
   const head = el('div', 'panel');
-  head.appendChild(el('h2', '', `T-${t.number}: ${t.subject}`));
-  head.appendChild(el('div', 'ticket-meta', `${STATUS[t.status] || t.status} · opened ${when(t.created_at)}`));
+  const title = el('div', 'panel-head');
+  title.append(el('h2', '', t.subject), pill(t.status));
+  head.appendChild(title);
+  head.appendChild(el('div', 'ticket-meta', `T-${t.number} · opened ${when(t.created_at)}${t.category ? ` · ${t.category}` : ''}`));
   head.appendChild(el('p', 'written', t.body));
+  const thread = el('div', 'thread');
   for (const c of t.comments || []) {
     const r = el('div', c.team ? 'reply team' : 'reply');
-    r.appendChild(el('div', 'ticket-meta', `${c.team ? `${c.author_name || 'Support'} (support team)` : 'You'} · ${when(c.at)}`));
+    r.appendChild(el('div', 'ticket-meta', `${c.team ? `${c.author_name || 'Support'} · support team` : 'You'} · ${when(c.at)}`));
     r.appendChild(el('p', 'written', c.body));
-    head.appendChild(r);
+    thread.appendChild(r);
   }
+  head.appendChild(thread);
   view.appendChild(head);
 
   if (t.status === 'closed') {
-    view.appendChild(el('p', 'muted', 'This request is closed. Open a new one if you need more help.'));
+    view.appendChild(el('p', 'empty', 'This request is closed. Open a new one if you need more help.'));
     return;
   }
   const form = el('form', 'panel');
@@ -229,7 +289,7 @@ async function showTicket(number) {
   reply.maxLength = 20000;
   form.appendChild(field('Your reply', reply));
   const bar = el('div', 'actions');
-  const send = el('button', 'button primary', 'Send reply');
+  const send = el('button', 'primary', 'Send reply');
   send.type = 'submit';
   bar.append(send, button('Close this request', 'linkish', () => attempt(async () => {
     await call('POST', `${desk()}/${t.number}/close`, {});
@@ -248,6 +308,7 @@ async function showTicket(number) {
 }
 
 async function start() {
+  $('sign-out').addEventListener('click', signOut);
   if (!app) {
     await landing();
     return;
