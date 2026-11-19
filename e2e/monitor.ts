@@ -121,12 +121,16 @@ export async function api(path: string, body?: unknown): Promise<any> {
 export async function waitForReadings(minimum = 2, seconds = 180) {
   const services = await api('/api/v1/services');
   const serviceID = services.services[0].id;
+  // The status page's tests open the first component's bar, so that is the
+  // one whose readings have to be folded: another component's are not enough.
+  const { components } = await api(`/api/v1/services/${serviceID}/components`);
+  const firstComponent = components[0].id;
   for (let i = 0; i < seconds; i++) {
     const { samples } = await api('/api/v1/samples?limit=20');
     if ((samples || []).length >= minimum) {
       const { buckets } = await api(
         `/api/v1/buckets?service_id=${serviceID}&width=60&from=0&to=9999999999`);
-      if ((buckets || []).length > 0) return samples;
+      if ((buckets || []).some((b: { component_id: string }) => b.component_id === firstComponent)) return samples;
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
