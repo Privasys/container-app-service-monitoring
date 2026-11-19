@@ -4,10 +4,12 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 )
 
@@ -162,6 +164,68 @@ func TestTheSupportDesk(t *testing.T) {
 		if strings.Contains(tk.Body, "TEAM-NOTE-ONLY") {
 			t.Fatal("deleted content survived")
 		}
+	}
+}
+
+func TestTheSupportSite(t *testing.T) {
+	srv, host, _ := newAppServer(t)
+	a, err := host.Ensure(appA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.Sync([]tenancy.App{{ID: appA, Name: "checkout", DisplayName: "Checkout", Hostname: "checkout.apps.example"}}, true)
+	page := func(path, hostname string) (int, string, string) {
+		req, _ := http.NewRequest("GET", srv.URL+path, nil)
+		req.Host = hostname
+		res, err := http.DefaultTransport.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(raw), res.Header.Get("Content-Security-Policy")
+	}
+	const support, status = "support.privasys.org", "status.privasys.org"
+
+	// The address decides the page: the support site's root and an app's
+	// path show support; the status site keeps its own pages.
+	for _, c := range []struct{ path, hostname string }{
+		{"/", support}, {"/apps/checkout/", support}, {"/support/", status}, {"/support/checkout/", status},
+	} {
+		code, body, policy := page(c.path, c.hostname)
+		if code != http.StatusOK || !strings.Contains(body, "/support.js") {
+			t.Fatalf("%s on %s: %d", c.path, c.hostname, code)
+		}
+		if !strings.Contains(policy, "frame-src https://privasys.id") {
+			t.Fatalf("%s on %s: policy %q", c.path, c.hostname, policy)
+		}
+	}
+	if _, body, policy := page("/", status); strings.Contains(body, "/support.js") || strings.Contains(policy, "frame-src") {
+		t.Fatal("the status site's home became the support page")
+	}
+	if code, _, _ := page("/apps/checkout/", status); code != http.StatusNotFound {
+		t.Fatalf("an unpublished status page answered %d", code)
+	}
+	for _, asset := range []string{"/support.js", "/support.css", "/privasys-auth-client.iife.js"} {
+		if code, _, _ := page(asset, support); code != http.StatusOK {
+			t.Fatalf("%s: %d", asset, code)
+		}
+	}
+
+	// Only an app open to the public is listed.
+	_, list := send(t, srv, "GET", "/api/v1/public/support", "", nil)
+	if n := len(list["apps"].([]any)); n != 0 {
+		t.Fatalf("a closed desk was listed: %d", n)
+	}
+	cfg := tickets.DefaultSettings()
+	cfg.Intake = tickets.IntakePublic
+	if err := a.Tickets.SetSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, list = send(t, srv, "GET", "/api/v1/public/support", "", nil)
+	entry := list["apps"].([]any)[0].(map[string]any)
+	if entry["name"] != "checkout" || entry["display_name"] != "Checkout" {
+		t.Fatalf("index: %v", entry)
 	}
 }
 

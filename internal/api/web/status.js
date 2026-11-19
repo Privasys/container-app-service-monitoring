@@ -51,6 +51,16 @@ async function load() {
     const json = document.getElementById('feed-json');
     if (atom) atom.href = `${publicBase}/history.atom`;
     if (json) json.href = `/api/v2/apps/${encodeURIComponent(appId)}/summary.json`;
+    // An app that takes support requests links to them from its status page.
+    fetch(`${publicBase}/support`, { headers: { accept: 'application/json' } }).then((r) => {
+      const link = document.getElementById('get-support');
+      if (!r.ok || !link) return;
+      const app = encodeURIComponent(appId);
+      link.href = location.hostname.startsWith('status.')
+        ? `https://support.${location.hostname.slice('status.'.length)}/apps/${app}/`
+        : `/support/${app}/`;
+      link.hidden = false;
+    }).catch(() => {});
   }
   render();
 }

@@ -577,7 +577,9 @@
             "/apps/",
             "/status.css",
             "/status.js",
-            "/verify.js"
+            "/verify.js",
+            "/support",
+            "/privasys-auth-client.iife.js"
         ],
         "public": [
             {

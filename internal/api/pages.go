@@ -27,7 +27,16 @@ func registerPages(mux *http.ServeMux, s *Server) {
 	}
 	files := http.FileServer(http.FS(assets))
 
-	serve := func(name string) http.HandlerFunc {
+	// The page loads its own scripts and talks only to this origin. Saying
+	// so keeps an injected script from having anywhere to send what it reads.
+	const ownOrigin = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'"
+	// The support page also signs people in, so it may frame the identity
+	// provider and reach the wallet's relay, and nothing else.
+	const signIn = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://privasys.id; " +
+		"frame-src https://privasys.id; connect-src 'self' https://privasys.id https://api.developer.privasys.org " +
+		"https://api.developer.test.privasys.org wss://relay.privasys.org"
+
+	servePage := func(name, policy string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			body, err := fs.ReadFile(assets, name)
 			if err != nil {
@@ -36,16 +45,24 @@ func registerPages(mux *http.ServeMux, s *Server) {
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
-			// The page loads its own scripts and talks only to this
-			// origin. Saying so keeps an injected script from having
-			// anywhere to send what it reads.
-			w.Header().Set("Content-Security-Policy",
-				"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'")
+			w.Header().Set("Content-Security-Policy", policy)
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Referrer-Policy", "no-referrer")
 			_, _ = w.Write(body)
 		}
 	}
+
+	serve := func(name string) http.HandlerFunc { return servePage(name, ownOrigin) }
+	supportPage := servePage("support.html", signIn)
+	// The support site is the same app under another name: its address
+	// decides which page an app's path shows.
+	onSupportHost := func(r *http.Request) bool { return strings.HasPrefix(r.Host, "support.") }
+
+	mux.HandleFunc("GET /support/{$}", supportPage)
+	mux.HandleFunc("GET /support/{app}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /support/{app}/{$}", supportPage)
 
 	statusPage := serve("index.html")
 	mux.HandleFunc("GET /status", statusPage)
@@ -54,7 +71,7 @@ func registerPages(mux *http.ServeMux, s *Server) {
 
 	// The scripts and stylesheets, served at the root so both pages can
 	// reference them the same way.
-	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js", "home.js"} {
+	for _, asset := range []string{"status.css", "status.js", "explorer.css", "explorer.js", "verify.js", "home.js", "support.js", "support.css", "privasys-auth-client.iife.js"} {
 		name := asset
 		mux.HandleFunc("GET /"+name, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=300")
@@ -79,7 +96,14 @@ func registerPages(mux *http.ServeMux, s *Server) {
 	mux.HandleFunc("GET /apps/{app}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 	})
-	mux.HandleFunc("GET /apps/{app}/{$}", s.publicApp(statusPage))
+	publicStatus := s.publicApp(statusPage)
+	mux.HandleFunc("GET /apps/{app}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		if onSupportHost(r) {
+			supportPage(w, r)
+			return
+		}
+		publicStatus(w, r)
+	})
 	mux.HandleFunc("GET /apps/{app}/{asset}", s.publicApp(func(w http.ResponseWriter, r *http.Request) {
 		asset := r.PathValue("asset")
 		if !strings.HasSuffix(asset, ".js") && !strings.HasSuffix(asset, ".css") {
@@ -92,5 +116,12 @@ func registerPages(mux *http.ServeMux, s *Server) {
 	}))
 
 	// The landing page: the apps whose teams publish their status.
-	mux.HandleFunc("GET /{$}", serve("home.html"))
+	home := serve("home.html")
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if onSupportHost(r) {
+			supportPage(w, r)
+			return
+		}
+		home(w, r)
+	})
 }

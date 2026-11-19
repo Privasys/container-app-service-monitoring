@@ -38,6 +38,7 @@ func (s *Server) registerTickets(mux *http.ServeMux) {
 
 	// What a support page needs before anyone has signed in.
 	mux.HandleFunc("GET /api/v1/public/apps/{app}/support", s.publicSupport)
+	mux.HandleFunc("GET /api/v1/public/support", s.publicSupportIndex)
 
 	// The same desk as tools, for the CLI, MCP clients and agents. The app
 	// is named in the body, by its id or its platform name.
@@ -444,6 +445,29 @@ func (s *Server) publicSupport(w http.ResponseWriter, r *http.Request) {
 		body["name"], body["display_name"] = known.Name, known.DisplayName
 	}
 	writePublicJSON(w, http.StatusOK, body)
+}
+
+// publicSupportIndex lists the apps taking requests from the public.
+func (s *Server) publicSupportIndex(w http.ResponseWriter, _ *http.Request) {
+	type entry struct {
+		App         string `json:"app"`
+		Name        string `json:"name,omitempty"`
+		DisplayName string `json:"display_name,omitempty"`
+	}
+	out := []entry{}
+	if s.Tenants != nil {
+		for _, t := range s.Tenants.List() {
+			if t.Tickets == nil || t.Tickets.Settings().Intake != tickets.IntakePublic {
+				continue
+			}
+			e := entry{App: t.ID}
+			if known, ok := s.Tenants.KnownApp(t.ID); ok {
+				e.Name, e.DisplayName = known.Name, known.DisplayName
+			}
+			out = append(out, e)
+		}
+	}
+	writePublicJSON(w, http.StatusOK, map[string]any{"apps": out})
 }
 
 // -- tools ---------------------------------------------------------------

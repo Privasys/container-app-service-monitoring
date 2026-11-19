@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privasys support</title>
+<link rel="stylesheet" href="/status.css">
+<link rel="stylesheet" href="/support.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <h1 id="title">Support</h1>
+    <p id="subtitle" class="muted">Ask an app's team for help.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="message" class="notice" role="status" hidden></div>
+  <section id="view" class="cards"></section>
+  <div id="gate"></div>
+</main>
+
+<footer class="wrap muted">
+  <p>
+    <a id="status-link" href="/" hidden>Service status</a>
+    Your requests travel encrypted to a confidential VM, and only this app's
+    team can read them. Served by
+    <a href="https://github.com/Privasys/container-app-service-monitoring">container-app-service-monitoring</a>,
+    open source under the AGPL-3.0 licence.
+  </p>
+</footer>
+
+<script src="/privasys-auth-client.iife.js"></script>
+<script src="/support.js"></script>
+</body>
+</html>

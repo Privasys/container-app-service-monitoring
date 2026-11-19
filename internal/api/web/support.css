@@ -1,0 +1,33 @@
+/* Copyright (c) Privasys. Licensed under the AGPL-3.0. */
+
+.notice { margin: 0 0 20px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; }
+.notice.error { border-color: var(--bad); color: var(--bad); }
+
+.panel { padding: 18px 20px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.panel h2 { margin: 0 0 6px; font-size: 17px; color: inherit; text-transform: none; letter-spacing: 0; }
+
+.field { display: block; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
+.field input, .field select, .field textarea {
+  display: block; box-sizing: border-box; width: 100%; margin-top: 5px; padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  color: inherit; font: inherit; font-size: 15px;
+}
+.field textarea { min-height: 130px; resize: vertical; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+.button {
+  padding: 9px 15px; border: 1px solid var(--line); border-radius: 8px; background: transparent;
+  color: inherit; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none;
+}
+.button.primary { border-color: var(--ok); background: var(--ok); color: #fff; }
+.button:disabled { opacity: 0.5; cursor: default; }
+.linkish { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
+
+.ticket-row { display: block; width: 100%; padding: 13px 0; border: 0; border-bottom: 1px solid var(--line); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ticket-row:last-child { border-bottom: 0; }
+.ticket-subject { font-weight: 600; overflow-wrap: anywhere; }
+.ticket-meta { margin-top: 3px; font-size: 13px; color: var(--muted); }
+
+.written { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reply { margin-top: 12px; padding: 11px 13px; border-left: 2px solid var(--line); }
+.reply.team { border-left-color: var(--ok); }
