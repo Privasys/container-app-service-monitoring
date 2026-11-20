@@ -257,7 +257,28 @@ func (h *Host) RunSync(ctx context.Context, source AppSource, interval time.Dura
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
+		case <-h.kick:
+			// Asked to read again now. Requests close together share one
+			// read, and reads are never closer than syncMinGap.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(syncMinGap):
+			}
 		}
+	}
+}
+
+// syncMinGap is the least time between two listings asked for early.
+var syncMinGap = 5 * time.Second
+
+// RequestSync asks for the app list to be read again soon, rather than at
+// the next interval: after a team lists or publishes an app, its pages
+// follow within seconds. Requests made before that read share it.
+func (h *Host) RequestSync() {
+	select {
+	case h.kick <- struct{}{}:
+	default:
 	}
 }
 

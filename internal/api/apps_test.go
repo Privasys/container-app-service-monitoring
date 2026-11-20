@@ -431,3 +431,14 @@ func TestAnAppsPublicPageAnswersAtItsPlatformName(t *testing.T) {
 		}
 	}
 }
+
+func TestAnyoneSignedInMayAskForTheListingToBeReadAgain(t *testing.T) {
+	srv, _, _ := newAppServer(t)
+	path := "/api/v1/apps/" + appA + "/refresh-listing"
+	if code, _ := call(t, srv, "POST", path, ""); code != http.StatusUnauthorized {
+		t.Fatalf("without a token: %d", code)
+	}
+	if code, _ := call(t, srv, "POST", path, token("stranger")); code != http.StatusAccepted {
+		t.Fatalf("a signed-in stranger: %d", code)
+	}
+}

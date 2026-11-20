@@ -169,3 +169,29 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"apps": out})
 }
+
+// refreshListing asks the monitor to read the platform's app list again
+// now, so a change to an app's listing or its account's short name shows on
+// the status and support pages within seconds rather than at the next
+// interval. It needs a signed-in caller but no right on the app: it only
+// re-reads what the control plane already holds, and calls close together
+// share one read.
+func (s *Server) refreshListing(w http.ResponseWriter, r *http.Request) {
+	if s.Tenants == nil {
+		writeError(w, http.StatusNotFound, "this monitor does not host apps", "")
+		return
+	}
+	// A valid platform token is enough: an account's admins change
+	// listings without holding a role on each app.
+	token, ok := bearerToken(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not authenticated", "a bearer token is required")
+		return
+	}
+	if _, err := s.verifier.Verify(r.Context(), token); err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated", err.Error())
+		return
+	}
+	s.Tenants.RequestSync()
+	writeJSON(w, http.StatusAccepted, map[string]any{"refresh": "requested"})
+}

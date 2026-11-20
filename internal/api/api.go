@@ -168,6 +168,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("GET /api/v1/apps", s.listApps)
 	mux.HandleFunc("POST /api/v1/apps/{app}/enable", s.enableApp)
+	mux.HandleFunc("POST /api/v1/apps/{app}/refresh-listing", s.refreshListing)
 	mux.HandleFunc("DELETE /api/v1/apps/{app}", s.removeApp)
 
 	authed("GET", "/api/v1/status", s.status)

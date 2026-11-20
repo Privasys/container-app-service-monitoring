@@ -107,6 +107,8 @@ type Host struct {
 	opts   Options
 	log    *slog.Logger
 	shared chan struct{}
+	// kick asks RunSync to read the app list again early.
+	kick chan struct{}
 
 	mu      sync.Mutex
 	tenants map[string]*Tenant
@@ -129,6 +131,7 @@ func New(opts Options, log *slog.Logger) *Host {
 	return &Host{
 		opts: opts, log: log,
 		shared:  make(chan struct{}, opts.Shared),
+		kick:    make(chan struct{}, 1),
 		tenants: map[string]*Tenant{},
 		apps:    map[string]App{},
 		missing: map[string]int{},
