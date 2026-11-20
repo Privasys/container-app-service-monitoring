@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+<path d="M100 0H450L0 450V100A100 100 0 0 1 100 0Z" fill="#34E89E"/>
+<path d="M500 50V400A100 100 0 0 1 400 500H50L500 50Z" fill="#00BCF2"/>
+<polygon points="0,500 50,500 500,50 500,0" fill="#fff"/>
+</svg>

@@ -278,3 +278,34 @@ func TestTicketLimitsAnswerTooManyRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryPageCarriesThePrivasysIcon(t *testing.T) {
+	srv, _, _ := newAppServer(t)
+	for _, name := range []string{"web/index.html", "web/home.html", "web/support.html", "web/explorer.html"} {
+		raw, err := webFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `href="/favicon/favicon.svg"`) {
+			t.Errorf("%s does not link the icon", name)
+		}
+	}
+	for path, kind := range map[string]string{
+		"/favicon/favicon.svg":          "image/svg+xml",
+		"/favicon/apple-touch-icon.png": "image/png",
+		"/favicon.svg":                  "image/svg+xml",
+		"/favicon.ico":                  "",
+	} {
+		res, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), kind) {
+			t.Errorf("%s: %d %s", path, res.StatusCode, res.Header.Get("Content-Type"))
+		}
+	}
+	if res, err := http.Get(srv.URL + "/favicon/nothing.png"); err != nil || res.StatusCode != http.StatusNotFound {
+		t.Errorf("an unknown icon was answered")
+	}
+}

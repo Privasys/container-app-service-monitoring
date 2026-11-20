@@ -79,6 +79,31 @@ func registerPages(mux *http.ServeMux, s *Server) {
 			files.ServeHTTP(w, r)
 		})
 	}
+	// The Privasys icon set, the same files every Privasys site serves at
+	// /favicon/, with the icon also at the root where browsers and link
+	// previews ask for it unprompted.
+	icons, err := fs.Sub(assets, "favicon")
+	if err != nil {
+		panic("api: icon assets: " + err.Error())
+	}
+	iconFiles := http.FileServer(http.FS(icons))
+	serveIcon := func(name string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if _, err := fs.Stat(icons, name); err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			r.URL.Path = "/" + name
+			iconFiles.ServeHTTP(w, r)
+		}
+	}
+	mux.HandleFunc("GET /favicon/{file}", func(w http.ResponseWriter, r *http.Request) {
+		serveIcon(r.PathValue("file"))(w, r)
+	})
+	mux.HandleFunc("GET /favicon.svg", serveIcon("favicon.svg"))
+	mux.HandleFunc("GET /favicon.ico", serveIcon("favicon.ico"))
+
 	// The status page under a slug loads its assets relative to itself.
 	mux.HandleFunc("GET /status/{slug}/{asset}", func(w http.ResponseWriter, r *http.Request) {
 		asset := r.PathValue("asset")

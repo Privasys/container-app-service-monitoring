@@ -579,7 +579,8 @@
             "/status.js",
             "/verify.js",
             "/support",
-            "/privasys-auth-client.iife.js"
+            "/privasys-auth-client.iife.js",
+            "/favicon"
         ],
         "public": [
             {
