@@ -6,15 +6,23 @@
 
 (() => {
   const host = location.hostname;
+  const site = document.body.dataset.site;
+  // On the support name every page is a support page. The server answers
+  // that way when it can see the name; where a proxy in front hides it, the
+  // browser, which always knows its own address, takes the reader there.
+  if (host.startsWith('support.') && site !== 'support') {
+    const parts = location.pathname.split('/').filter(Boolean);
+    const app = parts[0] === 'apps' && parts[1] ? parts[1] : '';
+    location.replace(app ? `/support/${app}/` : '/support/');
+    return;
+  }
   let statusHome = '/';
   let supportHome = '/support/';
   if (host.startsWith('status.')) {
-    supportHome = `https://support.${host.slice('status.'.length)}/`;
+    supportHome = `https://support.${host.slice('status.'.length)}/support/`;
   } else if (host.startsWith('support.')) {
     statusHome = `https://status.${host.slice('support.'.length)}/`;
-    supportHome = '/';
   }
-  const site = document.body.dataset.site;
   const links = { status: document.getElementById('nav-status'), support: document.getElementById('nav-support') };
   if (links.status) links.status.href = statusHome;
   if (links.support) links.support.href = supportHome;

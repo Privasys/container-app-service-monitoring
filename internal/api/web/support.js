@@ -116,7 +116,7 @@ async function landing() {
     const list = el('div', 'ticket-list');
     for (const a of apps) {
       const link = el('a', 'ticket-row');
-      link.href = `${onSupportHost ? '/apps' : '/support'}/${encodeURIComponent(a.name || a.app)}/`;
+      link.href = `/support/${encodeURIComponent(a.name || a.app)}/`;
       const main = el('div', 'ticket-main');
       main.appendChild(el('div', 'ticket-subject', a.display_name || a.name || a.app));
       link.appendChild(main);

@@ -57,7 +57,7 @@ async function load() {
       if (!r.ok || !link) return;
       const app = encodeURIComponent(appId);
       link.href = location.hostname.startsWith('status.')
-        ? `https://support.${location.hostname.slice('status.'.length)}/apps/${app}/`
+        ? `https://support.${location.hostname.slice('status.'.length)}/support/${app}/`
         : `/support/${app}/`;
       link.hidden = false;
     }).catch(() => {});
