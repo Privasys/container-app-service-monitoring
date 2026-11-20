@@ -76,6 +76,9 @@ type Server struct {
 	// Tenants holds one monitor per app, on the shared platform
 	// instance. Nil on an instance that watches one service only.
 	Tenants *tenancy.Host
+	// HomeApp is this monitor's own app. Its account's directory is the
+	// one the site's home pages show.
+	HomeApp string
 	// AppRoles is the role model app-scoped requests resolve against:
 	// the portal's team roles for that app, and the platform admins.
 	AppRoles *auth.Model

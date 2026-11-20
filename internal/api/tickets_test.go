@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 )
 
@@ -168,12 +167,13 @@ func TestTheSupportDesk(t *testing.T) {
 }
 
 func TestTheSupportSite(t *testing.T) {
-	srv, host, _ := newAppServer(t)
+	srv, host, _, s := buildAppServer(t)
+	s.HomeApp = homeApp
 	a, err := host.Ensure(appA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	host.Sync([]tenancy.App{{ID: appA, Name: "checkout", DisplayName: "Checkout", Hostname: "checkout.apps.example"}}, true)
+	host.Sync(directoryApps(false), true)
 	page := func(path, hostname string) (int, string, string) {
 		req, _ := http.NewRequest("GET", srv.URL+path, nil)
 		req.Host = hostname
@@ -190,7 +190,7 @@ func TestTheSupportSite(t *testing.T) {
 	// The address decides the page: the support site's root and an app's
 	// path show support; the status site keeps its own pages.
 	for _, c := range []struct{ path, hostname string }{
-		{"/", support}, {"/apps/checkout/", support}, {"/support/", status}, {"/support/checkout/", status},
+		{"/", support}, {"/@privasys/", support}, {"/@privasys/checkout/", support}, {"/support/", status}, {"/support/checkout/", status},
 	} {
 		code, body, policy := page(c.path, c.hostname)
 		if code != http.StatusOK || !strings.Contains(body, "/support.js") {
@@ -240,6 +240,15 @@ func TestTheSupportSite(t *testing.T) {
 	entry := list["apps"].([]any)[0].(map[string]any)
 	if entry["name"] != "checkout" || entry["display_name"] != "Checkout" {
 		t.Fatalf("index: %v", entry)
+	}
+	// The account's own support directory lists it too; another's does not.
+	_, list = send(t, srv, "GET", "/api/v1/public/accounts/@privasys/support", "", nil)
+	if n := len(list["apps"].([]any)); n != 1 {
+		t.Fatalf("the account directory lists %d", n)
+	}
+	_, list = send(t, srv, "GET", "/api/v1/public/accounts/@acme/support", "", nil)
+	if n := len(list["apps"].([]any)); n != 0 {
+		t.Fatalf("another account lists %d", n)
 	}
 }
 

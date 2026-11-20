@@ -220,6 +220,7 @@ func run(log *slog.Logger) error {
 	server.Manifest = readManifest(log)
 	server.Clock = clockSvc
 	server.Tenants = host
+	server.HomeApp = cfg.AppID
 	server.AppRoles = appRoles
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -387,6 +388,8 @@ func startAppSync(ctx context.Context, log *slog.Logger, host *tenancy.Host, pla
 			out = append(out, tenancy.App{
 				ID: a.ID, Name: a.Name, DisplayName: a.DisplayName,
 				AppType: a.AppType, Hostname: a.Hostname, Deployed: a.Deployed,
+				AccountID: a.AccountID, AccountSlug: a.AccountSlug, AccountName: a.AccountName,
+				Listed: a.Listed,
 			})
 		}
 		return out, complete, nil

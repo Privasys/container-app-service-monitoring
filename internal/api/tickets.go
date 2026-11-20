@@ -39,6 +39,7 @@ func (s *Server) registerTickets(mux *http.ServeMux) {
 	// What a support page needs before anyone has signed in.
 	mux.HandleFunc("GET /api/v1/public/apps/{app}/support", s.publicSupport)
 	mux.HandleFunc("GET /api/v1/public/support", s.publicSupportIndex)
+	mux.HandleFunc("GET /api/v1/public/accounts/{account}/support", s.publicSupportIndex)
 
 	// The same desk as tools, for the CLI, MCP clients and agents. The app
 	// is named in the body, by its id or its platform name.
@@ -443,31 +444,44 @@ func (s *Server) publicSupport(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{"app": id, "intake": cfg.Intake, "categories": cfg.Categories}
 	if known, ok := s.Tenants.KnownApp(id); ok {
 		body["name"], body["display_name"] = known.Name, known.DisplayName
+		if known.AccountSlug != "" {
+			body["account"] = map[string]string{"slug": known.AccountSlug, "name": known.AccountName}
+		}
 	}
 	writePublicJSON(w, http.StatusOK, body)
 }
 
-// publicSupportIndex lists the apps taking requests from the public.
-func (s *Server) publicSupportIndex(w http.ResponseWriter, _ *http.Request) {
+// publicSupportIndex lists an account's listed apps that take requests
+// from the public: the account in the address, or this monitor's own.
+func (s *Server) publicSupportIndex(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		App         string `json:"app"`
 		Name        string `json:"name,omitempty"`
 		DisplayName string `json:"display_name,omitempty"`
 	}
+	account, found := s.directoryAccount(r)
+	if !found && r.PathValue("account") != "" {
+		writeError(w, http.StatusNotFound, "no such support page", "")
+		return
+	}
 	out := []entry{}
-	if s.Tenants != nil {
+	if found {
 		for _, t := range s.Tenants.List() {
 			if t.Tickets == nil || t.Tickets.Settings().Intake != tickets.IntakePublic {
 				continue
 			}
-			e := entry{App: t.ID}
-			if known, ok := s.Tenants.KnownApp(t.ID); ok {
-				e.Name, e.DisplayName = known.Name, known.DisplayName
+			known, listed := s.listedIn(account, t.ID)
+			if !listed {
+				continue
 			}
-			out = append(out, e)
+			out = append(out, entry{App: t.ID, Name: known.Name, DisplayName: known.DisplayName})
 		}
 	}
-	writePublicJSON(w, http.StatusOK, map[string]any{"apps": out})
+	body := map[string]any{"apps": out}
+	if found {
+		body["account"] = accountJSON(account)
+	}
+	writePublicJSON(w, http.StatusOK, body)
 }
 
 // -- tools ---------------------------------------------------------------

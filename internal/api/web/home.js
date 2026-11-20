@@ -19,14 +19,33 @@ function el(tag, cls, text) {
   return e;
 }
 
+// An account's page lives at /@<account>/ and lists the apps the account
+// lists; the site's root lists the apps of the account that runs it.
+const first = location.pathname.split('/').filter(Boolean)[0] || '';
+const account = first.startsWith('@') ? first : '';
+
 async function load() {
   const banner = document.getElementById('banner');
   const headline = document.getElementById('headline');
   let apps = [];
   try {
-    const r = await fetch('/api/v1/public/apps', { headers: { accept: 'application/json' } });
+    const path = account ? `/api/v1/public/accounts/${encodeURIComponent(account)}/apps` : '/api/v1/public/apps';
+    const r = await fetch(path, { headers: { accept: 'application/json' } });
+    if (r.status === 404 && account) {
+      document.getElementById('home-title').textContent = 'Status page not found';
+      document.getElementById('home-intro').textContent = 'No account uses this address.';
+      banner.hidden = true;
+      return;
+    }
     if (!r.ok) throw new Error(`answered ${r.status}`);
-    apps = (await r.json()).apps || [];
+    const data = await r.json();
+    apps = data.apps || [];
+    if (account && data.account) {
+      const name = data.account.name || data.account.slug;
+      document.title = `${name} status`;
+      document.getElementById('home-title').textContent = `${name} status`;
+      document.getElementById('home-intro').textContent = `Live status of ${name}'s apps. Each one is watched from inside a confidential VM, and every figure on its page can be checked in your browser against a signed ledger.`;
+    }
   } catch (err) {
     headline.textContent = 'The status list could not be loaded.';
     return;

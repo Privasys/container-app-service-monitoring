@@ -5,8 +5,15 @@
 // they write travels inside that session. Text is always placed with text
 // nodes, never as markup, so what someone wrote is shown and never run.
 
+// Where the page is: /@<account>/ and /@<account>/<app>/ on the support
+// site, /support/@<account>/ and /support/<app>/ anywhere, and the older
+// /apps/<app>/. An address with no account means the site's own.
 const parts = location.pathname.split('/').filter(Boolean);
-const app = (parts[0] === 'support' || parts[0] === 'apps') && parts[1] ? decodeURIComponent(parts[1]) : '';
+const rest = parts[0] === 'support' ? parts.slice(1) : parts;
+const account = rest[0] && rest[0].startsWith('@') ? rest[0] : '';
+const app = account
+  ? (rest[1] ? decodeURIComponent(rest[1]) : '')
+  : ((parts[0] === 'support' || parts[0] === 'apps') && parts[1] ? decodeURIComponent(parts[1]) : '');
 const onSupportHost = location.hostname.startsWith('support.');
 const isTest = location.hostname.includes('.test.');
 
@@ -98,15 +105,29 @@ async function attempt(action) {
 }
 
 function statusURL() {
-  const page = `/apps/${encodeURIComponent(app)}/`;
+  const slug = info.account && info.account.slug;
+  const page = slug ? `/@${slug}/${encodeURIComponent(app)}/` : `/apps/${encodeURIComponent(app)}/`;
   return onSupportHost ? `https://status.${location.hostname.slice('support.'.length)}${page}` : page;
 }
 
 async function landing() {
   $('title').textContent = 'Support';
   $('subtitle').textContent = 'Choose the app you need help with.';
-  const r = await fetch('/api/v1/public/support', { headers: { accept: 'application/json' } });
-  const apps = r.ok ? ((await r.json()).apps || []) : [];
+  const path = account ? `/api/v1/public/accounts/${encodeURIComponent(account)}/support` : '/api/v1/public/support';
+  const r = await fetch(path, { headers: { accept: 'application/json' } });
+  if (r.status === 404 && account) {
+    $('subtitle').textContent = '';
+    say('No account uses this address.');
+    return;
+  }
+  const data = r.ok ? await r.json() : {};
+  const apps = data.apps || [];
+  const slug = data.account && data.account.slug;
+  if (account && data.account) {
+    const name = data.account.name || slug;
+    document.title = `${name} support`;
+    $('title').textContent = `${name} support`;
+  }
   view.replaceChildren();
   const panel = el('div', 'panel');
   panel.appendChild(el('h2', '', 'Apps taking requests'));
@@ -116,7 +137,8 @@ async function landing() {
     const list = el('div', 'ticket-list');
     for (const a of apps) {
       const link = el('a', 'ticket-row');
-      link.href = `/support/${encodeURIComponent(a.name || a.app)}/`;
+      const name = encodeURIComponent(a.name || a.app);
+      link.href = onSupportHost && slug ? `/@${slug}/${name}/` : `/support/${name}/`;
       const main = el('div', 'ticket-main');
       main.appendChild(el('div', 'ticket-subject', a.display_name || a.name || a.app));
       link.appendChild(main);
@@ -314,13 +336,17 @@ async function start() {
     return;
   }
   const r = await fetch(`/api/v1/public/apps/${encodeURIComponent(app)}/support`, { headers: { accept: 'application/json' } });
-  if (!r.ok) {
+  const found = r.ok ? await r.json() : null;
+  // Under an account's address, only that account's apps answer.
+  const mismatch = found && account
+    && (!found.account || found.account.slug.toLowerCase() !== account.slice(1).toLowerCase());
+  if (!found || mismatch) {
     $('title').textContent = 'Support';
     $('subtitle').textContent = '';
     say('This app is not taking support requests here.');
     return;
   }
-  info = await r.json();
+  info = found;
   const name = info.display_name || info.name || app;
   document.title = `${name} support`;
   $('title').textContent = `${name} support`;

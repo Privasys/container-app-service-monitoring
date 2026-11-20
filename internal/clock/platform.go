@@ -268,6 +268,12 @@ type App struct {
 	Hostname       string `json:"hostname"`
 	Deployed       bool   `json:"deployed"`
 	ContainerState string `json:"container_state,omitempty"`
+	// The account the app belongs to, and whether its team lists it in
+	// that account's directory.
+	AccountID   string `json:"account_id,omitempty"`
+	AccountSlug string `json:"account_slug,omitempty"`
+	AccountName string `json:"account_name,omitempty"`
+	Listed      bool   `json:"listed"`
 }
 
 // Apps lists every app on the platform (the app-status right). complete

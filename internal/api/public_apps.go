@@ -12,6 +12,7 @@ import (
 
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
+	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
 
 // One app's public status surface: the same page, JSON and evidence as
@@ -54,6 +55,12 @@ func (s *Server) publicAppMonitor(r *http.Request) *core.Monitor {
 	if !ok {
 		return nil
 	}
+	// Under an account's address, only that account's apps answer.
+	if slug := strings.TrimPrefix(r.PathValue("account"), "@"); slug != "" {
+		if known, ok := s.Tenants.KnownApp(id); !ok || !strings.EqualFold(known.AccountSlug, slug) {
+			return nil
+		}
+	}
 	t, err := s.Tenants.Get(id)
 	if err != nil {
 		return nil
@@ -73,6 +80,7 @@ func (s *Server) publicAppMonitor(r *http.Request) *core.Monitor {
 // registerPublicApps adds the per-app copies of the public routes.
 func (s *Server) registerPublicApps(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/public/apps", s.publicAppIndex)
+	mux.HandleFunc("GET /api/v1/public/accounts/{account}/apps", s.publicAppIndex)
 	const v1 = "/api/v1/public/apps/{app}"
 	mux.HandleFunc("GET "+v1+"/services", s.publicApp(s.publicServices))
 	mux.HandleFunc("GET "+v1+"/status", s.publicApp(s.publicStatus))
@@ -92,9 +100,54 @@ func (s *Server) registerPublicApps(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+v2+"/scheduled-maintenances.json", s.publicApp(s.v2Maintenance))
 }
 
-// publicAppIndex lists the apps whose teams have published a status page,
-// with where each is now. It is what the landing page and the app store
-// read; an app that has not published is not in it.
+// A directory is the list of one account's apps shown on that account's
+// home pages: status.privasys.org/@<account>/, and the site's own home
+// page for the account that runs this monitor. An app is in it when it
+// belongs to the account, its team lists it in the portal, and it has
+// something public to show. Its own page answers whether listed or not.
+
+// directoryAccount is the account a directory request names: the one in
+// the address, or the account this monitor's own app belongs to.
+func (s *Server) directoryAccount(r *http.Request) (tenancy.Account, bool) {
+	if s.Tenants == nil {
+		return tenancy.Account{}, false
+	}
+	if slug := strings.TrimPrefix(r.PathValue("account"), "@"); slug != "" {
+		return s.Tenants.AccountBySlug(slug)
+	}
+	return s.Tenants.AccountOf(s.HomeApp)
+}
+
+// listedIn reports whether an app belongs in an account's directory.
+func (s *Server) listedIn(account tenancy.Account, appID string) (tenancy.App, bool) {
+	known, ok := s.Tenants.KnownApp(appID)
+	if !ok || !known.Listed || known.AccountID == "" || known.AccountID != account.ID {
+		return known, false
+	}
+	return known, true
+}
+
+// appPage is where an app's status page is: under its account's short
+// name when the account has one, otherwise at the app's own address.
+func appPage(known tenancy.App, appID string) string {
+	name := known.Name
+	if name == "" {
+		name = appID
+	}
+	if known.AccountSlug != "" {
+		return "/@" + known.AccountSlug + "/" + name + "/"
+	}
+	return "/apps/" + name + "/"
+}
+
+// accountJSON is how a directory names its account.
+func accountJSON(a tenancy.Account) map[string]string {
+	return map[string]string{"slug": a.Slug, "name": a.Name}
+}
+
+// publicAppIndex lists an account's listed apps that have published a
+// status page, with where each is now. An unknown account is a 404, the
+// same as an account with nothing listed would be to a stranger guessing.
 func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		App       string `json:"app"`
@@ -104,10 +157,19 @@ func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
 		Headline  string `json:"headline"`
 		Page      string `json:"page"`
 	}
+	account, found := s.directoryAccount(r)
+	if !found && r.PathValue("account") != "" {
+		writeError(w, http.StatusNotFound, "no such status page", "")
+		return
+	}
 	out := []entry{}
-	if s.Tenants != nil {
+	if found {
 		now := time.Now().Unix()
 		for _, t := range s.Tenants.List() {
+			known, listed := s.listedIn(account, t.ID)
+			if !listed {
+				continue
+			}
 			services, err := t.Mon.Services()
 			if err != nil {
 				continue
@@ -116,10 +178,7 @@ func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
 				if svc.Visibility != model.VisibilityPublic {
 					continue
 				}
-				e := entry{App: t.ID, Service: svc.Name, Slug: svc.Slug, Page: "/apps/" + t.ID + "/"}
-				if known, ok := s.Tenants.KnownApp(t.ID); ok && known.Name != "" {
-					e.Page = "/apps/" + known.Name + "/"
-				}
+				e := entry{App: t.ID, Service: svc.Name, Slug: svc.Slug, Page: appPage(known, t.ID)}
 				if page, err := t.Mon.Status(svc.ID, now); err == nil && page != nil {
 					e.Indicator, e.Headline = page.Indicator, page.Headline
 				}
@@ -128,5 +187,9 @@ func (s *Server) publicAppIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Service) < strings.ToLower(out[j].Service) })
-	writePublicJSON(w, http.StatusOK, map[string]any{"apps": out})
+	body := map[string]any{"apps": out}
+	if found {
+		body["account"] = accountJSON(account)
+	}
+	writePublicJSON(w, http.StatusOK, body)
 }

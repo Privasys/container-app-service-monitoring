@@ -277,54 +277,6 @@ func TestAnAppsPublicPageAnswersOnlyOnceItsTeamMakesItPublic(t *testing.T) {
 	}
 }
 
-func TestTheLandingPageListsOnlyPublishedApps(t *testing.T) {
-	srv, host, _ := newAppServer(t)
-	for _, id := range []string{appA, appB} {
-		tn, err := host.Ensure(id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tn.EnsureStatus(tenancy.App{ID: id, Name: "app-" + id[:4], DisplayName: "App " + id[:4], Hostname: id[:4] + ".apps.example"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	res, err := http.Get(srv.URL + "/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Fatalf("the landing page: %d %s", res.StatusCode, res.Header.Get("Content-Type"))
-	}
-	list := func() []any {
-		code, body := call(t, srv, "GET", "/api/v1/public/apps", "")
-		if code != http.StatusOK {
-			t.Fatalf("index: %d", code)
-		}
-		apps, _ := body["apps"].([]any)
-		return apps
-	}
-	if n := len(list()); n != 0 {
-		t.Fatalf("the index lists %d unpublished apps", n)
-	}
-	a, _ := host.Get(appA)
-	p := auth.System(a.ID)
-	p.Grant(auth.PermModel)
-	svc, _ := a.Mon.Service(tenancy.StatusServiceID)
-	svc.Visibility = model.VisibilityPublic
-	if _, _, err := a.Mon.UpsertService(p, *svc, "Publish"); err != nil {
-		t.Fatal(err)
-	}
-	apps := list()
-	if len(apps) != 1 {
-		t.Fatalf("expected app A only, got %v", apps)
-	}
-	e := apps[0].(map[string]any)
-	if e["app"] != appA || e["page"] != "/apps/"+appA+"/" || e["service"] != "App 0f2c" {
-		t.Fatalf("index entry: %v", e)
-	}
-}
-
 func TestTheTokenRidesXAppAuthOverASealedSession(t *testing.T) {
 	srv, host, _ := newAppServer(t)
 	if _, err := host.Ensure(appA); err != nil {
@@ -344,12 +296,122 @@ func TestTheTokenRidesXAppAuthOverASealedSession(t *testing.T) {
 	}
 }
 
+// The accounts the directory tests use: the monitor's own, and a customer.
+const (
+	homeApp    = "99999999-8888-4777-8666-555555555555"
+	ourAccount = "aaaaaaaa-0000-4000-8000-000000000001"
+	customer   = "bbbbbbbb-0000-4000-8000-000000000002"
+)
+
+// directoryServer hosts two apps: A, ours and listed, and B, a customer's
+// and not listed. Both publish their status page.
+func directoryServer(t *testing.T, listB bool) (*httptest.Server, *tenancy.Host) {
+	t.Helper()
+	srv, host, _, s := buildAppServer(t)
+	s.HomeApp = homeApp
+	for _, id := range []string{appA, appB} {
+		tn, err := host.Ensure(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		host.Sync(directoryApps(listB), true)
+		p := auth.System(tn.ID)
+		p.Grant(auth.PermModel)
+		svc, _ := tn.Mon.Service(tenancy.StatusServiceID)
+		svc.Visibility = model.VisibilityPublic
+		if _, _, err := tn.Mon.UpsertService(p, *svc, "Publish"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return srv, host
+}
+
+func directoryApps(listB bool) []tenancy.App {
+	return []tenancy.App{
+		{ID: homeApp, Name: "platform-monitoring", Hostname: "platform-monitoring.apps.example",
+			AccountID: ourAccount, AccountSlug: "privasys", AccountName: "Privasys"},
+		{ID: appA, Name: "checkout", DisplayName: "Checkout", Hostname: "checkout.apps.example",
+			AccountID: ourAccount, AccountSlug: "privasys", AccountName: "Privasys", Listed: true},
+		{ID: appB, Name: "ledger", DisplayName: "Ledger", Hostname: "ledger.apps.example",
+			AccountID: customer, AccountSlug: "acme", AccountName: "Acme", Listed: listB},
+	}
+}
+
+func listed(t *testing.T, srv *httptest.Server, path string) (int, []string) {
+	t.Helper()
+	code, body := call(t, srv, "GET", path, "")
+	pages := []string{}
+	apps, _ := body["apps"].([]any)
+	for _, a := range apps {
+		pages = append(pages, a.(map[string]any)["page"].(string))
+	}
+	return code, pages
+}
+
+func TestTheHomePageListsOnlyItsOwnAccountsListedApps(t *testing.T) {
+	srv, _ := directoryServer(t, true)
+	// The customer listed B, but in their own directory, not ours.
+	if _, pages := listed(t, srv, "/api/v1/public/apps"); len(pages) != 1 || pages[0] != "/@privasys/checkout/" {
+		t.Fatalf("home directory: %v", pages)
+	}
+	if _, pages := listed(t, srv, "/api/v1/public/accounts/@acme/apps"); len(pages) != 1 || pages[0] != "/@acme/ledger/" {
+		t.Fatalf("acme directory: %v", pages)
+	}
+	if code, _ := listed(t, srv, "/api/v1/public/accounts/@nobody/apps"); code != http.StatusNotFound {
+		t.Fatalf("an unknown account answered %d", code)
+	}
+}
+
+func TestAnUnlistedAppIsInNoDirectoryButKeepsItsPage(t *testing.T) {
+	srv, _ := directoryServer(t, false)
+	if _, pages := listed(t, srv, "/api/v1/public/accounts/@acme/apps"); len(pages) != 0 {
+		t.Fatalf("an unlisted app was listed: %v", pages)
+	}
+	for _, path := range []string{"/@acme/ledger/", "/api/v1/public/apps/ledger/status"} {
+		if res, err := http.Get(srv.URL + path); err != nil || res.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %v %v", path, res.StatusCode, err)
+		}
+	}
+	// An app answers only under its own account's address.
+	if res, _ := http.Get(srv.URL + "/@privasys/ledger/"); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("another account's address answered %d", res.StatusCode)
+	}
+}
+
+func TestAnAppsOldAddressTakesTheReaderToItsAccountsPage(t *testing.T) {
+	srv, _ := directoryServer(t, false)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for path, want := range map[string]string{
+		"/apps/ledger/":       "/@acme/ledger/",
+		"/apps/" + appB + "/": "/@acme/ledger/",
+		"/@acme":              "/@acme/",
+		"/@acme/ledger":       "/@acme/ledger/",
+	} {
+		res, err := client.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusMovedPermanently || res.Header.Get("Location") != want {
+			t.Fatalf("%s: %d to %q", path, res.StatusCode, res.Header.Get("Location"))
+		}
+	}
+	// A first segment without the @ is never an account.
+	if res, _ := client.Get(srv.URL + "/acme/"); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("/acme/ answered %d", res.StatusCode)
+	}
+	if res, _ := client.Get(srv.URL + "/@acme/"); res.StatusCode != http.StatusOK {
+		t.Fatalf("/@acme/ answered %d", res.StatusCode)
+	}
+}
+
 func TestAnAppsPublicPageAnswersAtItsPlatformName(t *testing.T) {
 	srv, host, _ := newAppServer(t)
 	a, err := host.Ensure(appA)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An account with no short name keeps its apps at their own address.
 	host.Sync([]tenancy.App{{ID: appA, Name: "checkout", Hostname: "checkout.apps.example"}}, true)
 	p := auth.System(a.ID)
 	p.Grant(auth.PermModel)
@@ -367,9 +429,5 @@ func TestAnAppsPublicPageAnswersAtItsPlatformName(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("%s answered %d", path, res.StatusCode)
 		}
-	}
-	_, body := call(t, srv, "GET", "/api/v1/public/apps", "")
-	if e := body["apps"].([]any)[0].(map[string]any); e["page"] != "/apps/checkout/" {
-		t.Fatalf("the index should link by name: %v", e)
 	}
 }

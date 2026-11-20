@@ -16,13 +16,12 @@ const slug = (() => {
   return parts[0] === 'status' && parts[1] ? parts[1] : '';
 })();
 
-// One app's page lives at /apps/<app id or name>/ on the shared platform
-// instance, and reads that app's data; anywhere else the page reads the
-// instance's own.
-const appId = (() => {
-  const m = location.pathname.match(/^\/apps\/([^/]+)\/?/);
-  return m ? m[1] : '';
-})();
+// One app's page lives under its account, at /@<account>/<app>/, or at
+// /apps/<app id or name>/, on the shared platform instance, and reads that
+// app's data; anywhere else the page reads the instance's own.
+const pathParts = location.pathname.split('/').filter(Boolean);
+const account = pathParts[0] && pathParts[0].startsWith('@') ? pathParts[0] : '';
+const appId = (pathParts[0] === 'apps' || account) && pathParts[1] ? decodeURIComponent(pathParts[1]) : '';
 const publicBase = appId ? `/api/v1/public/apps/${encodeURIComponent(appId)}` : '/api/v1/public';
 
 // A phone has no room for 90 bars, so it draws the most recent 30.
@@ -56,8 +55,9 @@ async function load() {
       const link = document.getElementById('get-support');
       if (!r.ok || !link) return;
       const app = encodeURIComponent(appId);
+      const where = account ? `${account}/${app}/` : `support/${app}/`;
       link.href = location.hostname.startsWith('status.')
-        ? `https://support.${location.hostname.slice('status.'.length)}/support/${app}/`
+        ? `https://support.${location.hostname.slice('status.'.length)}/${where}`
         : `/support/${app}/`;
       link.hidden = false;
     }).catch(() => {});

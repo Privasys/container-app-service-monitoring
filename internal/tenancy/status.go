@@ -7,14 +7,16 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
 
-// App is what the control plane says about an app: where it is served
-// and whether it is deployed.
+// App is what the control plane says about an app: where it is served,
+// whether it is deployed, the account it belongs to, and whether its team
+// lists it in that account's directory.
 type App struct {
 	ID          string
 	Name        string
@@ -22,6 +24,17 @@ type App struct {
 	AppType     string
 	Hostname    string
 	Deployed    bool
+	AccountID   string
+	AccountSlug string
+	AccountName string
+	Listed      bool
+}
+
+// Account is an account as the app list describes it.
+type Account struct {
+	ID   string
+	Slug string
+	Name string
 }
 
 // AppSource lists every app on the platform. complete reports whether the
@@ -262,4 +275,29 @@ func ResolvesToLoopback(host string) bool {
 		}
 	}
 	return true
+}
+
+// AccountBySlug finds the account a public address names by its short
+// name, which only the control plane's list supplies. Case does not matter.
+func (h *Host) AccountBySlug(slug string) (Account, bool) {
+	if slug == "" {
+		return Account{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.apps {
+		if a.AccountID != "" && strings.EqualFold(a.AccountSlug, slug) {
+			return Account{ID: a.AccountID, Slug: a.AccountSlug, Name: a.AccountName}, true
+		}
+	}
+	return Account{}, false
+}
+
+// AccountOf returns the account an app belongs to.
+func (h *Host) AccountOf(appID string) (Account, bool) {
+	a, ok := h.KnownApp(appID)
+	if !ok || a.AccountID == "" {
+		return Account{}, false
+	}
+	return Account{ID: a.AccountID, Slug: a.AccountSlug, Name: a.AccountName}, true
 }

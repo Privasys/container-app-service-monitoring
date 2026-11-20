@@ -5,6 +5,7 @@ package api
 
 import (
 	"embed"
+	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -128,6 +129,22 @@ func registerPages(mux *http.ServeMux, s *Server) {
 	})
 	publicStatus := s.publicApp(statusPage)
 	mux.HandleFunc("GET /apps/{app}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		// An app whose account has a short name lives under it now; its
+		// old address, already shared in links, takes the reader there.
+		// Only once the app has a public page here: the redirect names the
+		// account, which an unpublished app keeps to itself.
+		if s.Tenants != nil && s.hasPublicPage(r, onSupportHost(r)) {
+			if id, ok := s.Tenants.Resolve(r.PathValue("app")); ok {
+				if known, ok := s.Tenants.KnownApp(id); ok && known.AccountSlug != "" {
+					target := appPage(known, id)
+					if r.URL.RawQuery != "" {
+						target += "?" + r.URL.RawQuery
+					}
+					http.Redirect(w, r, target, http.StatusMovedPermanently)
+					return
+				}
+			}
+		}
 		if onSupportHost(r) {
 			supportPage(w, r)
 			return
@@ -154,4 +171,64 @@ func registerPages(mux *http.ServeMux, s *Server) {
 		}
 		home(w, r)
 	})
+
+	// An account's pages, under its short name: /@<account>/ lists the
+	// apps it lists, and /@<account>/<app>/ is one app's page. The status
+	// site shows status there and the support site support. A first path
+	// segment without the @ is not an account, so the site's own paths
+	// can never be taken by one.
+	isAccount := func(r *http.Request) bool {
+		a := r.PathValue("account")
+		return len(a) > 1 && a[0] == '@'
+	}
+	mux.HandleFunc("GET /{account}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAccount(r) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /{account}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !isAccount(r):
+			http.NotFound(w, r)
+		case onSupportHost(r):
+			supportPage(w, r)
+		default:
+			home(w, r)
+		}
+	})
+	mux.HandleFunc("GET /{account}/{app}", func(w http.ResponseWriter, r *http.Request) {
+		if !isAccount(r) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	})
+	accountStatus := s.publicApp(statusPage)
+	mux.HandleFunc("GET /{account}/{app}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case !isAccount(r):
+			http.NotFound(w, r)
+		case onSupportHost(r):
+			supportPage(w, r)
+		default:
+			accountStatus(w, r)
+		}
+	})
+}
+
+// hasPublicPage reports whether the app a page address names shows
+// anything public there: a published status page, or on the support site,
+// a desk open to the public.
+func (s *Server) hasPublicPage(r *http.Request, support bool) bool {
+	if !support {
+		return s.publicAppMonitor(r) != nil
+	}
+	id, ok := s.Tenants.Resolve(r.PathValue("app"))
+	if !ok {
+		return false
+	}
+	t, err := s.Tenants.Get(id)
+	return err == nil && t.Tickets != nil && t.Tickets.Settings().Intake == tickets.IntakePublic
 }

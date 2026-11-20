@@ -580,7 +580,8 @@
             "/verify.js",
             "/support",
             "/privasys-auth-client.iife.js",
-            "/favicon"
+            "/favicon",
+            "/@"
         ],
         "public": [
             {

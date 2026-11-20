@@ -2,26 +2,36 @@
 //
 // The header shared by the status and support sites. Both are one app
 // answering under two names, so where each link points depends on the name
-// the page was opened under.
+// the page was opened under, and on the account whose pages these are
+// (/@<account>/ on either site).
 
 (() => {
   const host = location.hostname;
   const site = document.body.dataset.site;
+  const parts = location.pathname.split('/').filter(Boolean);
+  const rest = parts[0] === 'support' ? parts.slice(1) : parts;
+  const account = rest[0] && rest[0].startsWith('@') ? rest[0] : '';
+
   // On the support name every page is a support page. The server answers
   // that way when it can see the name; where a proxy in front hides it, the
   // browser, which always knows its own address, takes the reader there.
   if (host.startsWith('support.') && site !== 'support') {
-    const parts = location.pathname.split('/').filter(Boolean);
-    const app = parts[0] === 'apps' && parts[1] ? parts[1] : '';
-    location.replace(app ? `/support/${app}/` : '/support/');
+    const app = (parts[0] === 'apps' || account) && parts[1] ? parts[1] : '';
+    location.replace(app ? `/support/${app}/` : account ? `/support/${account}/` : '/support/');
     return;
   }
-  let statusHome = '/';
-  let supportHome = '/support/';
-  if (host.startsWith('status.')) {
-    supportHome = `https://support.${host.slice('status.'.length)}/support/`;
-  } else if (host.startsWith('support.')) {
-    statusHome = `https://status.${host.slice('support.'.length)}/`;
+
+  const onStatus = host.startsWith('status.');
+  const onSupport = host.startsWith('support.');
+  const base = onStatus ? host.slice('status.'.length) : onSupport ? host.slice('support.'.length) : '';
+  const accountPath = account ? `${account}/` : '';
+  let statusHome = `/${accountPath}`;
+  let supportHome = account ? `/support/${account}/` : '/support/';
+  if (onStatus) {
+    supportHome = `https://support.${base}/${account ? accountPath : 'support/'}`;
+  } else if (onSupport) {
+    statusHome = `https://status.${base}/${accountPath}`;
+    supportHome = account ? `/${accountPath}` : '/support/';
   }
   const links = { status: document.getElementById('nav-status'), support: document.getElementById('nav-support') };
   if (links.status) links.status.href = statusHome;
