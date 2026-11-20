@@ -200,6 +200,20 @@ func TestTheSupportSite(t *testing.T) {
 			t.Fatalf("%s on %s: policy %q", c.path, c.hostname, policy)
 		}
 	}
+	// Under its own domain the runtime keeps the platform hostname and
+	// passes the reader's name along beside it.
+	forwarded, _ := http.NewRequest("GET", srv.URL+"/", nil)
+	forwarded.Host = "platform-monitoring.apps.privasys.org"
+	forwarded.Header.Set("X-Forwarded-Host", support)
+	res, err := http.DefaultTransport.RoundTrip(forwarded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if !strings.Contains(string(raw), "/support.js") {
+		t.Fatal("the support name passed along by the runtime did not show the support page")
+	}
 	if _, body, policy := page("/", status); strings.Contains(body, "/support.js") || strings.Contains(policy, "frame-src") {
 		t.Fatal("the status site's home became the support page")
 	}

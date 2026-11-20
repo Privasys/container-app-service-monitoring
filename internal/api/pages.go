@@ -55,8 +55,13 @@ func registerPages(mux *http.ServeMux, s *Server) {
 	serve := func(name string) http.HandlerFunc { return servePage(name, ownOrigin) }
 	supportPage := servePage("support.html", signIn)
 	// The support site is the same app under another name: its address
-	// decides which page an app's path shows.
-	onSupportHost := func(r *http.Request) bool { return strings.HasPrefix(r.Host, "support.") }
+	// decides which page an app's path shows. Under its own domain the
+	// runtime hands the app its platform hostname and the name the reader
+	// typed in X-Forwarded-Host. Either way, the choice is only between two
+	// public pages.
+	onSupportHost := func(r *http.Request) bool {
+		return strings.HasPrefix(r.Host, "support.") || strings.HasPrefix(r.Header.Get("X-Forwarded-Host"), "support.")
+	}
 
 	mux.HandleFunc("GET /support/{$}", supportPage)
 	mux.HandleFunc("GET /support/{app}", func(w http.ResponseWriter, r *http.Request) {
