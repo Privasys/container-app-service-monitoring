@@ -43,8 +43,8 @@ type Dispatcher struct {
 	// Account is the store of the account the app belongs to (account.go):
 	// its rota when the app has none, and people's account-wide channels.
 	Account func() *Store
-	Wallet   Wallet
-	Mail     Mailer
+	Wallet  Wallet
+	Mail    Mailer
 	// Callback is the path on the monitor's host a form's answer comes to.
 	Callback string
 	// ConsoleURL is where a person can see the incident.

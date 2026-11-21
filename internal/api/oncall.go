@@ -57,7 +57,7 @@ func (s *Server) onCallOverview(req *request) (any, error) {
 	body := map[string]any{
 		"plan": d.Store.Plan(), "effective_plan": effective, "on_call": effective.OnCall(time.Now()),
 		"inherits_account": d.InheritsAccount(),
-		"me": d.Preference(req.p.Sub), "sub": req.p.Sub,
+		"me":               d.Preference(req.p.Sub), "sub": req.p.Sub,
 		"can_manage": req.p.Can(auth.PermAdmin),
 		"pages":      d.Store.Pages(20),
 	}
