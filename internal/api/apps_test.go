@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
@@ -93,6 +94,12 @@ func buildAppServer(t *testing.T) (*httptest.Server, *tenancy.Host, *int, *Serve
 
 	s := NewServer(log, mon, auth.DevVerifier{}, roles, probe.New(mon, log))
 	s.Tenants, s.AppRoles = host, appRoles
+	appRoles.AccountOf = func(tenant string) string {
+		if a, ok := host.AccountOf(tenant); ok {
+			return a.ID
+		}
+		return ""
+	}
 	changed := 0
 	s.TenantsChanged = func() { changed++ }
 	srv := httptest.NewServer(s.Handler())
@@ -440,5 +447,24 @@ func TestAnyoneSignedInMayAskForTheListingToBeReadAgain(t *testing.T) {
 	}
 	if code, _ := call(t, srv, "POST", path, token("stranger")); code != http.StatusAccepted {
 		t.Fatalf("a signed-in stranger: %d", code)
+	}
+}
+
+func TestAnAccountRoleCountsForEveryAppOfThatAccountOnly(t *testing.T) {
+	srv, _ := directoryServer(t, false)
+	ourKey := strings.ReplaceAll(ourAccount, "-", "")
+	customerKey := strings.ReplaceAll(customer, "-", "")
+	settings := "/api/v1/apps/" + appA + "/support/settings"
+	// An admin of the account that holds app A manages its support.
+	if code, body := call(t, srv, "GET", settings, token("ada", "privasys-platform:account:"+ourKey+":admin")); code != http.StatusOK || body["can_manage"] != true {
+		t.Fatalf("account admin: %d %v", code, body)
+	}
+	// A member of that account sees it but does not manage it.
+	if code, body := call(t, srv, "GET", settings, token("bob", "privasys-platform:account:"+ourKey+":member")); code != http.StatusOK || body["can_manage"] == true {
+		t.Fatalf("account member: %d %v", code, body)
+	}
+	// An admin of another account gets nothing on app A.
+	if code, _ := call(t, srv, "GET", settings, token("eve", "privasys-platform:account:"+customerKey+":admin")); code == http.StatusOK {
+		t.Fatalf("another account's admin was let in")
 	}
 }

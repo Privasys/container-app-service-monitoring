@@ -33,6 +33,10 @@ type RoleSpec struct {
 type Model struct {
 	roles  map[string]*RoleSpec
 	byRole map[string][]string // identity-provider role → register roles
+	// AccountOf names the account an app tenant belongs to, so a role on
+	// that account (":account:<key>:") matches a declaration written with
+	// the "{account}" placeholder. Nil, or "" for a tenant, matches none.
+	AccountOf func(tenant string) string
 }
 
 // NewModel builds the lookup tables and checks the declarations are
@@ -103,12 +107,25 @@ func (m *Model) Resolve(id *Identity, tenant, requestedRole string) (*Principal,
 	if key := AppKey(tenant); key != "" {
 		scoped = ":app:" + key + ":"
 	}
+	// Likewise a role on the account the app belongs to, matched only for
+	// apps of that account.
+	accountScoped := ""
+	if m.AccountOf != nil {
+		if key := AppKey(m.AccountOf(tenant)); key != "" {
+			accountScoped = ":account:" + key + ":"
+		}
+	}
 	for _, r := range id.Roles {
 		for _, name := range m.byRole[r] {
 			held[name] = true
 		}
 		if scoped != "" && strings.Contains(r, scoped) {
 			for _, name := range m.byRole[strings.Replace(r, scoped, ":app:{app}:", 1)] {
+				held[name] = true
+			}
+		}
+		if accountScoped != "" && strings.Contains(r, accountScoped) {
+			for _, name := range m.byRole[strings.Replace(r, accountScoped, ":account:{account}:", 1)] {
 				held[name] = true
 			}
 		}

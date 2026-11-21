@@ -188,6 +188,14 @@ func run(log *slog.Logger) error {
 	}, log)
 
 	*hostRef = host
+	// A role on an app's account counts for the app: the account the
+	// platform's app list names.
+	appRoles.AccountOf = func(tenant string) string {
+		if a, ok := host.AccountOf(tenant); ok {
+			return a.ID
+		}
+		return ""
+	}
 
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
 	server.MailCert = &api.MailCertificate{

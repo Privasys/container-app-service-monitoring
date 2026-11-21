@@ -140,13 +140,14 @@ var AppRoles = []RoleSpec{
 		PII: true,
 	},
 	{
-		// The app's owners and admins in the portal, and the people they
-		// make support admins.
+		// The app's owners and admins in the portal, the people they make
+		// support admins, and the admins of the account the app belongs to.
 		Name: RoleAppAdmin, Title: "Support admin",
 		OIDCRoles: []string{
 			"privasys-platform:app:{app}:owner",
 			"privasys-platform:app:{app}:admin",
 			"privasys-platform:app:{app}:support-admin",
+			"privasys-platform:account:{account}:admin",
 		},
 		Permissions: []string{
 			PermModel, PermSecrets, PermRun, PermRespond, PermMaintenance,
@@ -165,10 +166,13 @@ var AppRoles = []RoleSpec{
 		PII: true,
 	},
 	{
+		// The app's viewers, the people made support viewers, and the
+		// members of the account the app belongs to.
 		Name: RoleAppViewer, Title: "Support viewer",
 		OIDCRoles: []string{
 			"privasys-platform:app:{app}:viewer",
 			"privasys-platform:app:{app}:support-viewer",
+			"privasys-platform:account:{account}:member",
 		},
 		Permissions: []string{PermExplorer, PermProofs, PermCheckpoints, PermReports},
 	},
