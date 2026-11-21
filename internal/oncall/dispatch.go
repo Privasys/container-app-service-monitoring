@@ -40,6 +40,9 @@ type Dispatcher struct {
 	Team    TeamSource
 	// Platform lists the platform operators' team, the last level of a page.
 	Platform TeamSource
+	// Account is the store of the account the app belongs to (account.go):
+	// its rota when the app has none, and people's account-wide channels.
+	Account func() *Store
 	Wallet   Wallet
 	Mail     Mailer
 	// Callback is the path on the monitor's host a form's answer comes to.
@@ -193,6 +196,7 @@ func (d *Dispatcher) sendLevel(ctx context.Context, pageID string) {
 		prefs := d.Store.prefsLocked()
 		plan := d.Store.st.Plan
 		d.Store.mu.Unlock()
+		plan, prefs = Effective(plan, prefs, d.accountStore())
 
 		people := Recipients(level, team, plan, prefs, now)
 		if level == LevelPlatform {
@@ -320,8 +324,8 @@ func (d *Dispatcher) advance(pageID, why string) bool {
 // Tick escalates the pages whose level has had its time.
 func (d *Dispatcher) Tick(ctx context.Context) {
 	now := d.now()
+	ack := d.EffectivePlan().Ack()
 	d.Store.mu.Lock()
-	ack := d.Store.st.Plan.Ack()
 	var due []string
 	for _, p := range d.Store.st.Pages {
 		if p.State == PageOpen && now.Sub(time.Unix(p.LevelAt, 0)) >= ack {
@@ -437,6 +441,7 @@ func (d *Dispatcher) Resolve(ctx context.Context, componentID string) {
 	prefs := d.Store.prefsLocked()
 	d.saveOrLog()
 	d.Store.mu.Unlock()
+	prefs = d.mergedPrefs(prefs)
 
 	title := fmt.Sprintf("%s has recovered", d.name())
 	body := fmt.Sprintf("%s is answering again.", component)
@@ -461,7 +466,7 @@ func (d *Dispatcher) Resolve(ctx context.Context, componentID string) {
 // Test sends one harmless notice by each channel the person chose, so
 // they can see that it reaches them before an outage does.
 func (d *Dispatcher) Test(ctx context.Context, sub string) map[string]string {
-	pref := d.Store.Preference(sub)
+	pref := d.Preference(sub)
 	out := map[string]string{}
 	title := "Test alert from " + d.name()
 	body := "This is a test. Alerts for this app will reach you here."

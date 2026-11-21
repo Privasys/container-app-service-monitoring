@@ -169,6 +169,9 @@ func run(log *slog.Logger) error {
 	// app's monitor opens.
 	var platformAPI *clock.Platform
 	hostRef := new(*tenancy.Host)
+	// Each account's rota and its people's account-wide alert channels, on
+	// the sealed volume beside the apps' own.
+	onCallAccounts := oncall.NewAccounts(filepath.Join(cfg.DataDir, "accounts"))
 	host := tenancy.New(tenancy.Options{
 		Dir: filepath.Join(cfg.DataDir, "tenants"), Material: material,
 		Base: core.Options{
@@ -179,7 +182,7 @@ func run(log *slog.Logger) error {
 		Configure: func(t *tenancy.Tenant) {
 			t.Scheduler.RollupLag = cfg.RollupLag
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
-			wireOnCall(t, log, hostRef, platformAPI, mon, cfg.AppID, func(ctx context.Context, to, subject, body string) error {
+			wireOnCall(t, log, hostRef, onCallAccounts, platformAPI, mon, cfg.AppID, func(ctx context.Context, to, subject, body string) error {
 				return mailSender.Send(ctx, cfg.MailFrom, to, subject, body)
 			})
 		},
@@ -211,7 +214,7 @@ func run(log *slog.Logger) error {
 		if t.OnCall == nil {
 			return
 		}
-		pref := t.OnCall.Store.Preference(sub)
+		pref := t.OnCall.Preference(sub)
 		if pref.Wallet && t.OnCall.Wallet != nil {
 			if _, err := t.OnCall.Wallet.Message(ctx, sub, subject, body); err != nil {
 				log.Error("could not send a ticket notice to a wallet", "app", t.ID, "error", err)
@@ -228,6 +231,7 @@ func run(log *slog.Logger) error {
 	server.Manifest = readManifest(log)
 	server.Clock = clockSvc
 	server.Tenants = host
+	server.OnCallAccounts = onCallAccounts
 	server.HomeApp = cfg.AppID
 	server.AppRoles = appRoles
 
@@ -420,7 +424,7 @@ func (w walletNotices) Message(ctx context.Context, sub, _, _ string) (string, e
 }
 
 // wireOnCall gives an app's monitor its paging.
-func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, platformAPI *clock.Platform,
+func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, accounts *oncall.Accounts, platformAPI *clock.Platform,
 	mon *core.Monitor, monitorAppID string, send oncall.Mailer) {
 	store, err := oncall.OpenStore(t.Dir())
 	if err != nil {
@@ -443,6 +447,23 @@ func wireOnCall(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, platfo
 			return a.Name
 		},
 		Team: teamOf(platformAPI, id),
+		// The rota of the account the app belongs to, as the platform's app
+		// list names it now: an app moved to another account follows it.
+		Account: func() *oncall.Store {
+			if *host == nil {
+				return nil
+			}
+			a, ok := (*host).AccountOf(id)
+			if !ok {
+				return nil
+			}
+			s, err := accounts.Get(a.ID)
+			if err != nil {
+				log.Error("could not open an account's on-call data", "account", a.ID, "error", err)
+				return nil
+			}
+			return s
+		},
 	}
 	// The monitor app's own team runs the platform: the last people a page
 	// reaches when nobody on the app's team took it.
@@ -507,7 +528,7 @@ func watchMailCertificate(ctx context.Context, log *slog.Logger, dir string, cre
 				if t.OnCall == nil {
 					continue
 				}
-				if to := t.OnCall.Store.Preference(m.Sub).Email; to != "" {
+				if to := t.OnCall.Preference(m.Sub).Email; to != "" {
 					if err := send(ctx, to, subject, body); err != nil {
 						log.Error("could not email a mail certificate warning", "error", err)
 					} else {

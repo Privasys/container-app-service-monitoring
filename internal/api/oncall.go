@@ -51,10 +51,13 @@ func (s *Server) onCallOverview(req *request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	plan := d.Store.Plan()
+	// The plan the app runs on, which is its account's when it has no rota
+	// of its own; "plan" stays the app's own, which is what is edited here.
+	effective := d.EffectivePlan()
 	body := map[string]any{
-		"plan": plan, "on_call": plan.OnCall(time.Now()),
-		"me": d.Store.Preference(req.p.Sub), "sub": req.p.Sub,
+		"plan": d.Store.Plan(), "effective_plan": effective, "on_call": effective.OnCall(time.Now()),
+		"inherits_account": d.InheritsAccount(),
+		"me": d.Preference(req.p.Sub), "sub": req.p.Sub,
 		"can_manage": req.p.Can(auth.PermAdmin),
 		"pages":      d.Store.Pages(20),
 	}
@@ -111,7 +114,7 @@ func (s *Server) onCallForgetMine(req *request) (any, error) {
 	if err := d.Store.ForgetPreference(req.p.Sub); err != nil {
 		return nil, err
 	}
-	return map[string]any{"me": d.Store.Preference(req.p.Sub)}, nil
+	return map[string]any{"me": d.Preference(req.p.Sub)}, nil
 }
 
 func (s *Server) onCallTest(req *request) (any, error) {

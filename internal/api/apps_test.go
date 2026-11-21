@@ -22,6 +22,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
+	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
 
@@ -316,6 +317,7 @@ func directoryServer(t *testing.T, listB bool) (*httptest.Server, *tenancy.Host)
 	t.Helper()
 	srv, host, _, s := buildAppServer(t)
 	s.HomeApp = homeApp
+	s.OnCallAccounts = oncall.NewAccounts(t.TempDir())
 	for _, id := range []string{appA, appB} {
 		tn, err := host.Ensure(id)
 		if err != nil {
@@ -466,5 +468,31 @@ func TestAnAccountRoleCountsForEveryAppOfThatAccountOnly(t *testing.T) {
 	// An admin of another account gets nothing on app A.
 	if code, _ := call(t, srv, "GET", settings, token("eve", "privasys-platform:account:"+customerKey+":admin")); code == http.StatusOK {
 		t.Fatalf("another account's admin was let in")
+	}
+}
+
+func TestAnAccountsRotaIsItsAdminsToChange(t *testing.T) {
+	srv, _ := directoryServer(t, false)
+	base := "/api/v1/accounts/" + ourAccount + "/oncall"
+	ourKey := strings.ReplaceAll(ourAccount, "-", "")
+	admin := token("ada", "privasys-platform:account:"+ourKey+":admin")
+	member := token("bob", "privasys-platform:account:"+ourKey+":member")
+	stranger := token("eve", "privasys-platform:account:"+strings.ReplaceAll(customer, "-", "")+":admin")
+
+	if code, _ := send(t, srv, "POST", base+"/plan", admin, map[string]any{"rotation": []string{"ada", "bob"}, "period_days": 7}); code != http.StatusOK {
+		t.Fatalf("admin set plan: %d", code)
+	}
+	code, body := call(t, srv, "GET", base, member)
+	if code != http.StatusOK || body["can_manage"] == true {
+		t.Fatalf("member overview: %d %v", code, body)
+	}
+	if code, _ := send(t, srv, "POST", base+"/plan", member, map[string]any{"rotation": []string{"bob"}, "period_days": 1}); code != http.StatusForbidden {
+		t.Fatalf("member changed the plan: %d", code)
+	}
+	if code, _ := send(t, srv, "POST", base+"/me", member, map[string]any{"wallet": true, "when": "always"}); code != http.StatusOK {
+		t.Fatalf("member set their channels: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", base, stranger); code != http.StatusNotFound {
+		t.Fatalf("another account's admin: %d", code)
 	}
 }

@@ -322,3 +322,19 @@ func (h *Host) AccountOf(appID string) (Account, bool) {
 	}
 	return Account{ID: a.AccountID, Slug: a.AccountSlug, Name: a.AccountName}, true
 }
+
+// AccountByID finds an account the platform's list names, by its id.
+func (h *Host) AccountByID(id string) (Account, bool) {
+	key := strings.ToLower(strings.ReplaceAll(id, "-", ""))
+	if key == "" {
+		return Account{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, a := range h.apps {
+		if a.AccountID != "" && strings.ToLower(strings.ReplaceAll(a.AccountID, "-", "")) == key {
+			return Account{ID: a.AccountID, Slug: a.AccountSlug, Name: a.AccountName}, true
+		}
+	}
+	return Account{}, false
+}

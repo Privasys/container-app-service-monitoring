@@ -79,6 +79,8 @@ type Server struct {
 	// HomeApp is this monitor's own app. Its account's directory is the
 	// one the site's home pages show.
 	HomeApp string
+	// OnCallAccounts holds each account's rota (oncall/account.go).
+	OnCallAccounts *oncall.Accounts
 	// AppRoles is the role model app-scoped requests resolve against:
 	// the portal's team roles for that app, and the platform admins.
 	AppRoles *auth.Model
@@ -244,6 +246,7 @@ func (s *Server) Handler() http.Handler {
 
 	s.registerPublicApps(mux)
 	s.registerOnCall(mux)
+	s.registerAccountOnCall(mux)
 	s.registerTickets(mux)
 	registerPages(mux, s)
 
