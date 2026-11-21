@@ -19,10 +19,10 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/journey"
 	"github.com/Privasys/container-app-service-monitoring/internal/keys"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
+	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
-	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
 )
 
