@@ -24,6 +24,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
+	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 )
 
 const (
@@ -318,10 +319,19 @@ func directoryServer(t *testing.T, listB bool) (*httptest.Server, *tenancy.Host)
 	srv, host, _, s := buildAppServer(t)
 	s.HomeApp = homeApp
 	s.OnCallAccounts = oncall.NewAccounts(t.TempDir())
+	s.SupportAccounts = tickets.NewAccounts(t.TempDir())
 	for _, id := range []string{appA, appB} {
 		tn, err := host.Ensure(id)
 		if err != nil {
 			t.Fatal(err)
+		}
+		tn.Tickets.Account = func() *tickets.Defaults {
+			a, ok := host.AccountOf(id)
+			if !ok {
+				return nil
+			}
+			d, _ := s.SupportAccounts.Get(a.ID)
+			return d
 		}
 		host.Sync(directoryApps(listB), true)
 		p := auth.System(tn.ID)
@@ -494,5 +504,35 @@ func TestAnAccountsRotaIsItsAdminsToChange(t *testing.T) {
 	}
 	if code, _ := call(t, srv, "GET", base, stranger); code != http.StatusNotFound {
 		t.Fatalf("another account's admin: %d", code)
+	}
+}
+
+func TestAnAccountsSupportSettingsCoverItsApps(t *testing.T) {
+	srv, _ := directoryServer(t, false)
+	path := "/api/v1/accounts/" + ourAccount + "/support/settings"
+	ourKey := strings.ReplaceAll(ourAccount, "-", "")
+	admin := token("ada", "privasys-platform:account:"+ourKey+":admin")
+	member := token("bob", "privasys-platform:account:"+ourKey+":member")
+	stranger := token("eve", "privasys-platform:account:"+strings.ReplaceAll(customer, "-", "")+":admin")
+
+	if code, _ := call(t, srv, "GET", "/api/v1/public/apps/"+appA+"/support", ""); code != http.StatusNotFound {
+		t.Fatalf("a closed desk is public: %d", code)
+	}
+	cfg := tickets.DefaultSettings()
+	cfg.Intake = tickets.IntakePublic
+	if code, _ := send(t, srv, "POST", path, member, cfg); code != http.StatusForbidden {
+		t.Fatalf("a member changed the account's settings: %d", code)
+	}
+	if code, _ := send(t, srv, "POST", path, admin, cfg); code != http.StatusOK {
+		t.Fatalf("admin set the account's settings: %d", code)
+	}
+	if code, body := call(t, srv, "GET", path, member); code != http.StatusOK || body["set"] != true || body["can_manage"] == true {
+		t.Fatalf("member read: %d %v", code, body)
+	}
+	if code, _ := call(t, srv, "GET", path, stranger); code != http.StatusNotFound {
+		t.Fatalf("another account's admin: %d", code)
+	}
+	if code, _ := call(t, srv, "GET", "/api/v1/public/apps/"+appA+"/support", ""); code != http.StatusOK {
+		t.Fatalf("the app did not take the account's public desk: %d", code)
 	}
 }

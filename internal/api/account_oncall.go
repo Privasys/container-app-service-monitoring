@@ -27,26 +27,45 @@ func (s *Server) registerAccountOnCall(mux *http.ServeMux) {
 }
 
 // accountCaller resolves the account, the caller, and whether they manage
-// it. It writes the refusal itself.
+// it, and opens the account's rota. It writes the refusal itself.
 func (s *Server) accountCaller(w http.ResponseWriter, r *http.Request) (store *oncall.Store, accountID, sub string, manage bool, ok bool) {
-	if s.Tenants == nil || s.OnCallAccounts == nil {
+	if s.OnCallAccounts == nil {
 		writeError(w, http.StatusNotFound, "this monitor does not host accounts", "")
 		return nil, "", "", false, false
+	}
+	accountID, sub, manage, ok = s.accountAccess(w, r)
+	if !ok {
+		return nil, "", "", false, false
+	}
+	store, err := s.OnCallAccounts.Get(accountID)
+	if err != nil || store == nil {
+		writeError(w, http.StatusInternalServerError, "the account's on-call data could not be opened", "")
+		return nil, "", "", false, false
+	}
+	return store, accountID, sub, manage, true
+}
+
+// accountAccess resolves the account in the address and the caller: its
+// admins manage it, its members see it, and anyone else learns nothing.
+func (s *Server) accountAccess(w http.ResponseWriter, r *http.Request) (accountID, sub string, manage bool, ok bool) {
+	if s.Tenants == nil {
+		writeError(w, http.StatusNotFound, "this monitor does not host accounts", "")
+		return "", "", false, false
 	}
 	token, has := bearerToken(r)
 	if !has {
 		writeError(w, http.StatusUnauthorized, "not authenticated", "a bearer token is required")
-		return nil, "", "", false, false
+		return "", "", false, false
 	}
 	id, err := s.verifier.Verify(r.Context(), token)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "not authenticated", err.Error())
-		return nil, "", "", false, false
+		return "", "", false, false
 	}
 	acc, known := s.Tenants.AccountByID(r.PathValue("account"))
 	if !known {
 		writeError(w, http.StatusNotFound, "no such account", "")
-		return nil, "", "", false, false
+		return "", "", false, false
 	}
 	key := auth.AppKey(acc.ID)
 	admin, member := false, false
@@ -62,14 +81,9 @@ func (s *Server) accountCaller(w http.ResponseWriter, r *http.Request) (store *o
 	}
 	if !admin && !member {
 		writeError(w, http.StatusNotFound, "no such account", "")
-		return nil, "", "", false, false
+		return "", "", false, false
 	}
-	store, err = s.OnCallAccounts.Get(acc.ID)
-	if err != nil || store == nil {
-		writeError(w, http.StatusInternalServerError, "the account's on-call data could not be opened", "")
-		return nil, "", "", false, false
-	}
-	return store, acc.ID, id.Sub, admin, true
+	return acc.ID, id.Sub, admin, true
 }
 
 func (s *Server) accountOnCallOverview(w http.ResponseWriter, r *http.Request) {

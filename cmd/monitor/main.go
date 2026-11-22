@@ -54,6 +54,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/secrets"
 	"github.com/Privasys/container-app-service-monitoring/internal/store"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
+	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 	"github.com/Privasys/container-app-service-monitoring/internal/webhook"
 )
 
@@ -172,6 +173,8 @@ func run(log *slog.Logger) error {
 	// Each account's rota and its people's account-wide alert channels, on
 	// the sealed volume beside the apps' own.
 	onCallAccounts := oncall.NewAccounts(filepath.Join(cfg.DataDir, "accounts"))
+	// Each account's desk defaults, in the same account directories.
+	supportAccounts := tickets.NewAccounts(filepath.Join(cfg.DataDir, "accounts"))
 	host := tenancy.New(tenancy.Options{
 		Dir: filepath.Join(cfg.DataDir, "tenants"), Material: material,
 		Base: core.Options{
@@ -182,6 +185,7 @@ func run(log *slog.Logger) error {
 		Configure: func(t *tenancy.Tenant) {
 			t.Scheduler.RollupLag = cfg.RollupLag
 			t.Scheduler.CheckpointInterval = cfg.CheckpointInterval
+			wireSupport(t, log, hostRef, supportAccounts)
 			wireOnCall(t, log, hostRef, onCallAccounts, platformAPI, mon, cfg.AppID, func(ctx context.Context, to, subject, body string) error {
 				return mailSender.Send(ctx, cfg.MailFrom, to, subject, body)
 			})
@@ -232,6 +236,7 @@ func run(log *slog.Logger) error {
 	server.Clock = clockSvc
 	server.Tenants = host
 	server.OnCallAccounts = onCallAccounts
+	server.SupportAccounts = supportAccounts
 	server.HomeApp = cfg.AppID
 	server.AppRoles = appRoles
 
@@ -421,6 +426,30 @@ func (w walletNotices) Form(ctx context.Context, sub, form string) (string, erro
 // the title and body are for the channels that can carry them.
 func (w walletNotices) Message(ctx context.Context, sub, _, _ string) (string, error) {
 	return w.platform.Notify(ctx, sub, "app-message", map[string]string{"kind": "response", "path": "/"})
+}
+
+// wireSupport gives an app's desk its account's defaults: the account the
+// platform's app list names now, so an app moved to another account follows it.
+func wireSupport(t *tenancy.Tenant, log *slog.Logger, host **tenancy.Host, accounts *tickets.Accounts) {
+	if t.Tickets == nil {
+		return
+	}
+	id := t.ID
+	t.Tickets.Account = func() *tickets.Defaults {
+		if *host == nil {
+			return nil
+		}
+		a, ok := (*host).AccountOf(id)
+		if !ok {
+			return nil
+		}
+		d, err := accounts.Get(a.ID)
+		if err != nil {
+			log.Error("could not open an account's support settings", "account", a.ID, "error", err)
+			return nil
+		}
+		return d
+	}
 }
 
 // wireOnCall gives an app's monitor its paging.

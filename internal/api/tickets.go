@@ -35,6 +35,7 @@ func (s *Server) registerTickets(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+base+"/{number}", s.ticketRoute(s.deleteTicket))
 	mux.HandleFunc("GET /api/v1/apps/{app}/support/settings", s.ticketRoute(s.supportSettings))
 	mux.HandleFunc("POST /api/v1/apps/{app}/support/settings", s.ticketRoute(s.setSupportSettings))
+	mux.HandleFunc("DELETE /api/v1/apps/{app}/support/settings", s.ticketRoute(s.useAccountSupportSettings))
 
 	// What a support page needs before anyone has signed in.
 	mux.HandleFunc("GET /api/v1/public/apps/{app}/support", s.publicSupport)
@@ -401,7 +402,23 @@ func (s *Server) supportSettings(c *ticketCall) (any, error) {
 	if c.p == nil {
 		return nil, refusal("only the app's team reads its support settings")
 	}
-	return map[string]any{"settings": c.t.Tickets.Settings(), "can_manage": c.can(auth.PermAdmin), "can_respond": c.can(auth.PermRespond)}, nil
+	_, own := c.t.Tickets.OwnSettings()
+	return map[string]any{
+		"settings": c.t.Tickets.Settings(), "own": own, "inherits_account": c.t.Tickets.InheritsAccount(),
+		"can_manage": c.can(auth.PermAdmin), "can_respond": c.can(auth.PermRespond),
+	}, nil
+}
+
+// useAccountSupportSettings forgets the app's own settings, so its desk runs
+// on its account's again.
+func (s *Server) useAccountSupportSettings(c *ticketCall) (any, error) {
+	if !c.can(auth.PermAdmin) {
+		return nil, refusal("only the app's owners, admins and support admins change its support settings")
+	}
+	if err := c.t.Tickets.UseAccountSettings(); err != nil {
+		return nil, err
+	}
+	return map[string]any{"settings": c.t.Tickets.Settings(), "own": false, "inherits_account": c.t.Tickets.InheritsAccount()}, nil
 }
 
 func (s *Server) setSupportSettings(c *ticketCall) (any, error) {

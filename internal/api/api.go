@@ -35,6 +35,7 @@ import (
 	"github.com/Privasys/container-app-service-monitoring/internal/oncall"
 	"github.com/Privasys/container-app-service-monitoring/internal/probe"
 	"github.com/Privasys/container-app-service-monitoring/internal/tenancy"
+	"github.com/Privasys/container-app-service-monitoring/internal/tickets"
 )
 
 // Lifecycle states, which the platform's freeze gate makes visible: the
@@ -81,6 +82,8 @@ type Server struct {
 	HomeApp string
 	// OnCallAccounts holds each account's rota (oncall/account.go).
 	OnCallAccounts *oncall.Accounts
+	// SupportAccounts holds each account's desk defaults (tickets/account.go).
+	SupportAccounts *tickets.Accounts
 	// AppRoles is the role model app-scoped requests resolve against:
 	// the portal's team roles for that app, and the platform admins.
 	AppRoles *auth.Model
@@ -247,6 +250,7 @@ func (s *Server) Handler() http.Handler {
 	s.registerPublicApps(mux)
 	s.registerOnCall(mux)
 	s.registerAccountOnCall(mux)
+	s.registerAccountSupport(mux)
 	s.registerTickets(mux)
 	registerPages(mux, s)
 

@@ -249,12 +249,18 @@ func checkText(name, s string, max int, multiline bool) error {
 type Store struct {
 	dir string
 
+	// Account is the defaults of the account the app belongs to
+	// (account.go): what the desk runs on until its team sets its own.
+	Account func() *Defaults
+
 	mu       sync.Mutex
 	settings Settings
-	tickets  map[int64]*Ticket
-	next     int64
-	hits     map[string][]int64
-	notice   int64
+	// own is whether the app's team set its settings.
+	own     bool
+	tickets map[int64]*Ticket
+	next    int64
+	hits    map[string][]int64
+	notice  int64
 }
 
 var ticketFile = regexp.MustCompile(`^t-([0-9]+)\.json$`)
@@ -269,6 +275,7 @@ func Open(dir string) (*Store, error) {
 		if err := json.Unmarshal(raw, &s.settings); err != nil {
 			return nil, fmt.Errorf("tickets: settings: %w", err)
 		}
+		s.own = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("tickets: %w", err)
 	}
@@ -320,17 +327,12 @@ func (s *Store) saveLocked(t *Ticket) error {
 	return s.writeFile(fmt.Sprintf("t-%d.json", t.Number), raw)
 }
 
-// Settings returns how the desk is run.
+// Settings returns how the desk is run: its own settings, or its
+// account's when its team set none.
 func (s *Store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.settings
-	out.Categories = slices.Clone(s.settings.Categories)
-	out.Targets = make(map[string]Target, len(s.settings.Targets))
-	for k, v := range s.settings.Targets {
-		out.Targets[k] = v
-	}
-	return out
+	return s.effectiveLocked().clone()
 }
 
 // SetSettings changes how the desk is run.
@@ -347,7 +349,7 @@ func (s *Store) SetSettings(in Settings) error {
 	if err := s.writeFile("settings.json", raw); err != nil {
 		return err
 	}
-	s.settings = in
+	s.settings, s.own = in.clone(), true
 	return nil
 }
 
@@ -398,11 +400,12 @@ func (s *Store) Create(in New, now int64) (Ticket, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if in.Category != "" && !slices.Contains(s.settings.Categories, in.Category) {
+	cfg := s.effectiveLocked()
+	if in.Category != "" && !slices.Contains(cfg.Categories, in.Category) {
 		return Ticket{}, invalid("unknown category %q", in.Category)
 	}
 	if !in.Unlimited && !s.allowLocked("ticket:"+in.Requester, now, map[int64]int{
-		3600: s.settings.TicketsPerHour, 86400: s.settings.TicketsPerDay,
+		3600: cfg.TicketsPerHour, 86400: cfg.TicketsPerDay,
 	}) {
 		return Ticket{}, ErrLimited
 	}
@@ -504,7 +507,7 @@ func (s *Store) AddComment(number int64, r Reply, now int64) (Ticket, error) {
 	if len(t.Comments) >= maxComments {
 		return Ticket{}, invalid("this ticket has reached its limit of comments")
 	}
-	if !r.Unlimited && !s.allowLocked("comment:"+r.Author, now, map[int64]int{3600: s.settings.CommentsPerHour}) {
+	if !r.Unlimited && !s.allowLocked("comment:"+r.Author, now, map[int64]int{3600: s.effectiveLocked().CommentsPerHour}) {
 		return Ticket{}, ErrLimited
 	}
 	t.Comments = append(t.Comments, Comment{
@@ -577,7 +580,7 @@ func (s *Store) Update(number int64, actor string, c Change, now int64) (Ticket,
 	if !ok {
 		return Ticket{}, ErrNotFound
 	}
-	if c.Category != nil && *c.Category != "" && !slices.Contains(s.settings.Categories, *c.Category) {
+	if c.Category != nil && *c.Category != "" && !slices.Contains(s.effectiveLocked().Categories, *c.Category) {
 		return Ticket{}, invalid("unknown category %q", *c.Category)
 	}
 	if c.Priority != nil && *c.Priority != t.Priority {
