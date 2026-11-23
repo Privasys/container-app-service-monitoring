@@ -8,8 +8,10 @@
 (() => {
   const host = location.hostname;
   const site = document.body.dataset.site;
-  const parts = location.pathname.split('/').filter(Boolean);
-  const rest = parts[0] === 'support' ? parts.slice(1) : parts;
+  // /@/<account>/ is the address the site links to; /@<account>/ the older form.
+  const joinAccount = (p) => (p[0] === '@' && p[1] ? ['@' + p[1], ...p.slice(2)] : p);
+  const parts = joinAccount(location.pathname.split('/').filter(Boolean));
+  const rest = joinAccount(parts[0] === 'support' ? parts.slice(1) : parts);
   const account = rest[0] && rest[0].startsWith('@') ? rest[0] : '';
 
   // On the support name every page is a support page. The server answers
@@ -24,7 +26,7 @@
   const onStatus = host.startsWith('status.');
   const onSupport = host.startsWith('support.');
   const base = onStatus ? host.slice('status.'.length) : onSupport ? host.slice('support.'.length) : '';
-  const accountPath = account ? `${account}/` : '';
+  const accountPath = account ? `@/${account.slice(1)}/` : '';
   let statusHome = `/${accountPath}`;
   let supportHome = account ? `/support/${account}/` : '/support/';
   if (onStatus) {

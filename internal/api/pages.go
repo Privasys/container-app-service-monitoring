@@ -206,7 +206,7 @@ func registerPages(mux *http.ServeMux, s *Server) {
 		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 	})
 	accountStatus := s.publicApp(statusPage)
-	mux.HandleFunc("GET /{account}/{app}/{$}", func(w http.ResponseWriter, r *http.Request) {
+	appPage := func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case !isAccount(r):
 			http.NotFound(w, r)
@@ -215,7 +215,39 @@ func registerPages(mux *http.ServeMux, s *Server) {
 		default:
 			accountStatus(w, r)
 		}
+	}
+	mux.HandleFunc("GET /{account}/{app}/{$}", appPage)
+
+	// The same pages at /@/<account>/, the address the site links to. The
+	// runtime serves a declared prefix in the clear only on whole path
+	// segments, so "/@" covers /@/<account>/ but not /@<account>/, which a
+	// browser reaches only on a verifying leg. The handlers above read the
+	// account as "@<account>"; these hand it over in that form.
+	asAccount := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			slug := r.PathValue("slug")
+			if slug == "" || strings.HasPrefix(slug, "@") {
+				http.NotFound(w, r)
+				return
+			}
+			r.SetPathValue("account", "@"+slug)
+			h(w, r)
+		}
+	}
+	mux.HandleFunc("GET /@/{slug}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
 	})
+	mux.HandleFunc("GET /@/{slug}/{$}", asAccount(func(w http.ResponseWriter, r *http.Request) {
+		if onSupportHost(r) {
+			supportPage(w, r)
+			return
+		}
+		home(w, r)
+	}))
+	mux.HandleFunc("GET /@/{slug}/{app}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /@/{slug}/{app}/{$}", asAccount(appPage))
 }
 
 // hasPublicPage reports whether the app a page address names shows

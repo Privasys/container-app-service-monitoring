@@ -579,8 +579,13 @@
             "/status.js",
             "/verify.js",
             "/support",
+            "/support.css",
+            "/support.js",
+            "/status-nav.js",
             "/privasys-auth-client.iife.js",
             "/favicon",
+            "/favicon.svg",
+            "/favicon.ico",
             "/@"
         ],
         "public": [

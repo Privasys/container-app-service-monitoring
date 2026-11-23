@@ -135,7 +135,7 @@ func appPage(known tenancy.App, appID string) string {
 		name = appID
 	}
 	if known.AccountSlug != "" {
-		return "/@" + known.AccountSlug + "/" + name + "/"
+		return "/@/" + known.AccountSlug + "/" + name + "/"
 	}
 	return "/apps/" + name + "/"
 }

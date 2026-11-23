@@ -19,7 +19,10 @@ const slug = (() => {
 // One app's page lives under its account, at /@<account>/<app>/, or at
 // /apps/<app id or name>/, on the shared platform instance, and reads that
 // app's data; anywhere else the page reads the instance's own.
-const pathParts = location.pathname.split('/').filter(Boolean);
+// /@/<account>/ is the address the site links to (the runtime serves only
+// whole path segments in the clear); /@<account>/ is the older form.
+const joinAccount = (p) => (p[0] === '@' && p[1] ? ['@' + p[1], ...p.slice(2)] : p);
+const pathParts = joinAccount(location.pathname.split('/').filter(Boolean));
 const account = pathParts[0] && pathParts[0].startsWith('@') ? pathParts[0] : '';
 const appId = (pathParts[0] === 'apps' || account) && pathParts[1] ? decodeURIComponent(pathParts[1]) : '';
 const publicBase = appId ? `/api/v1/public/apps/${encodeURIComponent(appId)}` : '/api/v1/public';
@@ -55,7 +58,7 @@ async function load() {
       const link = document.getElementById('get-support');
       if (!r.ok || !link) return;
       const app = encodeURIComponent(appId);
-      const where = account ? `${account}/${app}/` : `support/${app}/`;
+      const where = account ? `@/${account.slice(1)}/${app}/` : `support/${app}/`;
       link.href = location.hostname.startsWith('status.')
         ? `https://support.${location.hostname.slice('status.'.length)}/${where}`
         : `/support/${app}/`;

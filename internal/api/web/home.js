@@ -21,7 +21,10 @@ function el(tag, cls, text) {
 
 // An account's page lives at /@<account>/ and lists the apps the account
 // lists; the site's root lists the apps of the account that runs it.
-const first = location.pathname.split('/').filter(Boolean)[0] || '';
+// /@/<account>/ is the address the site links to (the runtime serves only
+// whole path segments in the clear); /@<account>/ is the older form.
+const joinAccount = (p) => (p[0] === '@' && p[1] ? ['@' + p[1], ...p.slice(2)] : p);
+const first = joinAccount(location.pathname.split('/').filter(Boolean))[0] || '';
 const account = first.startsWith('@') ? first : '';
 
 async function load() {

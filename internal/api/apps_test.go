@@ -370,10 +370,10 @@ func listed(t *testing.T, srv *httptest.Server, path string) (int, []string) {
 func TestTheHomePageListsOnlyItsOwnAccountsListedApps(t *testing.T) {
 	srv, _ := directoryServer(t, true)
 	// The customer listed B, but in their own directory, not ours.
-	if _, pages := listed(t, srv, "/api/v1/public/apps"); len(pages) != 1 || pages[0] != "/@privasys/checkout/" {
+	if _, pages := listed(t, srv, "/api/v1/public/apps"); len(pages) != 1 || pages[0] != "/@/privasys/checkout/" {
 		t.Fatalf("home directory: %v", pages)
 	}
-	if _, pages := listed(t, srv, "/api/v1/public/accounts/@acme/apps"); len(pages) != 1 || pages[0] != "/@acme/ledger/" {
+	if _, pages := listed(t, srv, "/api/v1/public/accounts/@acme/apps"); len(pages) != 1 || pages[0] != "/@/acme/ledger/" {
 		t.Fatalf("acme directory: %v", pages)
 	}
 	if code, _ := listed(t, srv, "/api/v1/public/accounts/@nobody/apps"); code != http.StatusNotFound {
@@ -386,14 +386,16 @@ func TestAnUnlistedAppIsInNoDirectoryButKeepsItsPage(t *testing.T) {
 	if _, pages := listed(t, srv, "/api/v1/public/accounts/@acme/apps"); len(pages) != 0 {
 		t.Fatalf("an unlisted app was listed: %v", pages)
 	}
-	for _, path := range []string{"/@acme/ledger/", "/api/v1/public/apps/ledger/status"} {
+	for _, path := range []string{"/@/acme/ledger/", "/@acme/ledger/", "/api/v1/public/apps/ledger/status"} {
 		if res, err := http.Get(srv.URL + path); err != nil || res.StatusCode != http.StatusOK {
 			t.Fatalf("%s: %v %v", path, res.StatusCode, err)
 		}
 	}
 	// An app answers only under its own account's address.
-	if res, _ := http.Get(srv.URL + "/@privasys/ledger/"); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("another account's address answered %d", res.StatusCode)
+	for _, path := range []string{"/@/privasys/ledger/", "/@privasys/ledger/"} {
+		if res, _ := http.Get(srv.URL + path); res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s: another account's address answered %d", path, res.StatusCode)
+		}
 	}
 }
 
@@ -401,8 +403,10 @@ func TestAnAppsOldAddressTakesTheReaderToItsAccountsPage(t *testing.T) {
 	srv, _ := directoryServer(t, false)
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for path, want := range map[string]string{
-		"/apps/ledger/":       "/@acme/ledger/",
-		"/apps/" + appB + "/": "/@acme/ledger/",
+		"/apps/ledger/":       "/@/acme/ledger/",
+		"/apps/" + appB + "/": "/@/acme/ledger/",
+		"/@/acme":             "/@/acme/",
+		"/@/acme/ledger":      "/@/acme/ledger/",
 		"/@acme":              "/@acme/",
 		"/@acme/ledger":       "/@acme/ledger/",
 	} {
@@ -419,8 +423,15 @@ func TestAnAppsOldAddressTakesTheReaderToItsAccountsPage(t *testing.T) {
 	if res, _ := client.Get(srv.URL + "/acme/"); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("/acme/ answered %d", res.StatusCode)
 	}
-	if res, _ := client.Get(srv.URL + "/@acme/"); res.StatusCode != http.StatusOK {
-		t.Fatalf("/@acme/ answered %d", res.StatusCode)
+	// The account's pages answer at /@/<account>/, the address the runtime
+	// serves in the clear, and at the older /@<account>/.
+	for _, path := range []string{"/@/acme/", "/@acme/"} {
+		if res, _ := client.Get(srv.URL + path); res.StatusCode != http.StatusOK {
+			t.Fatalf("%s answered %d", path, res.StatusCode)
+		}
+	}
+	if res, _ := client.Get(srv.URL + "/@/@acme/"); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("/@/@acme/ answered %d", res.StatusCode)
 	}
 }
 

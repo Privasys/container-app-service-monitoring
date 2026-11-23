@@ -190,7 +190,7 @@ func TestTheSupportSite(t *testing.T) {
 	// The address decides the page: the support site's root and an app's
 	// path show support; the status site keeps its own pages.
 	for _, c := range []struct{ path, hostname string }{
-		{"/", support}, {"/@privasys/", support}, {"/@privasys/checkout/", support}, {"/support/", status}, {"/support/checkout/", status},
+		{"/", support}, {"/@privasys/", support}, {"/@privasys/checkout/", support}, {"/@/privasys/", support}, {"/@/privasys/checkout/", support}, {"/support/", status}, {"/support/checkout/", status},
 	} {
 		code, body, policy := page(c.path, c.hostname)
 		if code != http.StatusOK || !strings.Contains(body, "/support.js") {

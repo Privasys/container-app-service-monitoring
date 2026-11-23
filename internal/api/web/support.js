@@ -8,8 +8,11 @@
 // Where the page is: /@<account>/ and /@<account>/<app>/ on the support
 // site, /support/@<account>/ and /support/<app>/ anywhere, and the older
 // /apps/<app>/. An address with no account means the site's own.
-const parts = location.pathname.split('/').filter(Boolean);
-const rest = parts[0] === 'support' ? parts.slice(1) : parts;
+// /@/<account>/ is the address the site links to (the runtime serves only
+// whole path segments in the clear); /@<account>/ is the older form.
+const joinAccount = (p) => (p[0] === '@' && p[1] ? ['@' + p[1], ...p.slice(2)] : p);
+const parts = joinAccount(location.pathname.split('/').filter(Boolean));
+const rest = joinAccount(parts[0] === 'support' ? parts.slice(1) : parts);
 const account = rest[0] && rest[0].startsWith('@') ? rest[0] : '';
 const app = account
   ? (rest[1] ? decodeURIComponent(rest[1]) : '')
@@ -106,7 +109,7 @@ async function attempt(action) {
 
 function statusURL() {
   const slug = info.account && info.account.slug;
-  const page = slug ? `/@${slug}/${encodeURIComponent(app)}/` : `/apps/${encodeURIComponent(app)}/`;
+  const page = slug ? `/@/${encodeURIComponent(slug)}/${encodeURIComponent(app)}/` : `/apps/${encodeURIComponent(app)}/`;
   return onSupportHost ? `https://status.${location.hostname.slice('support.'.length)}${page}` : page;
 }
 
@@ -138,7 +141,7 @@ async function landing() {
     for (const a of apps) {
       const link = el('a', 'ticket-row');
       const name = encodeURIComponent(a.name || a.app);
-      link.href = onSupportHost && slug ? `/@${slug}/${name}/` : `/support/${name}/`;
+      link.href = onSupportHost && slug ? `/@/${slug}/${name}/` : `/support/${name}/`;
       const main = el('div', 'ticket-main');
       main.appendChild(el('div', 'ticket-subject', a.display_name || a.name || a.app));
       link.appendChild(main);
