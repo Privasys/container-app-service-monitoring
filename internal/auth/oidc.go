@@ -75,24 +75,80 @@ func (DevVerifier) Verify(_ context.Context, token string) (*Identity, error) {
 
 // JWKSVerifier validates tokens against an issuer's published keys.
 type JWKSVerifier struct {
-	issuer   string
-	audience string
-	client   *http.Client
+	issuer    string
+	audiences []string
+	// namespace, when set, is the audience the role model's role names
+	// are written in (see WithRoleNamespace).
+	namespace string
+	// audienceFor, when set and answering a list, decides the accepted
+	// audiences per request instead (see WithAudiences).
+	audienceFor func() []string
+	client      *http.Client
 
 	mu        sync.RWMutex
 	keys      map[string]*jwk
 	fetchedAt time.Time
 }
 
-// NewJWKSVerifier returns a verifier for tokens issued by issuer. An
+// NewJWKSVerifier returns a verifier for tokens issued by issuer for
+// audience, a comma-separated list: a token must be for one of them. An
 // empty audience skips the audience check.
 func NewJWKSVerifier(issuer, audience string) *JWKSVerifier {
-	return &JWKSVerifier{
-		issuer:   strings.TrimRight(issuer, "/"),
-		audience: audience,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		keys:     map[string]*jwk{},
+	var auds []string
+	for _, a := range strings.Split(audience, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			auds = append(auds, a)
+		}
 	}
+	return &JWKSVerifier{
+		issuer:    strings.TrimRight(issuer, "/"),
+		audiences: auds,
+		client:    &http.Client{Timeout: 10 * time.Second},
+		keys:      map[string]*jwk{},
+	}
+}
+
+// WithRoleNamespace makes the verifier read a token's audience-scoped
+// roles in the namespace of the audience the token was accepted for, and
+// hand them on written in namespace ns, the one the role model names.
+// The platform names a role "<audience>:…", and one identity provider
+// serves several platforms (production and test), so a token for
+// "privasys-platform-test" may carry roles of "privasys-platform" too:
+// only its own audience's roles count, renamed into ns, and the other
+// platform's are dropped. A role outside any platform namespace passes
+// unchanged. With ns equal to the token's audience nothing changes.
+func (v *JWKSVerifier) WithRoleNamespace(ns string) *JWKSVerifier {
+	v.namespace = ns
+	return v
+}
+
+// WithAudiences makes the accepted audiences whatever of returns when
+// a token is verified, falling back to the configured ones while it
+// returns none: a monitor learns which platform it serves from its
+// configuration, which arrives after the verifier is built.
+func (v *JWKSVerifier) WithAudiences(of func() []string) *JWKSVerifier {
+	v.audienceFor = of
+	return v
+}
+
+// scopeRoles applies the role namespace to roles of a token for aud.
+func (v *JWKSVerifier) scopeRoles(aud string, roles []string) []string {
+	if v.namespace == "" || aud == "" || aud == v.namespace {
+		return roles
+	}
+	own, platform := aud+":", v.namespace+":"
+	out := roles[:0:0]
+	for _, r := range roles {
+		switch {
+		case strings.HasPrefix(r, own):
+			out = append(out, platform+strings.TrimPrefix(r, own))
+		case strings.HasPrefix(r, platform):
+			// The other platform's role: it grants nothing here.
+		default:
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Verify checks signature, issuer, audience and expiry.
@@ -134,13 +190,28 @@ func (v *JWKSVerifier) Verify(ctx context.Context, token string) (*Identity, err
 	if iss, _ := claims["iss"].(string); iss != v.issuer {
 		return nil, fmt.Errorf("auth: issuer %q is not %q", iss, v.issuer)
 	}
-	if v.audience != "" && !audienceMatches(claims, v.audience) {
-		return nil, fmt.Errorf("auth: token is not for audience %q", v.audience)
+	audiences := v.audiences
+	if v.audienceFor != nil {
+		if auds := v.audienceFor(); len(auds) > 0 {
+			audiences = auds
+		}
+	}
+	aud := ""
+	if len(audiences) > 0 {
+		for _, a := range audiences {
+			if audienceMatches(claims, a) {
+				aud = a
+				break
+			}
+		}
+		if aud == "" {
+			return nil, fmt.Errorf("auth: token is not for audience %q", strings.Join(audiences, ","))
+		}
 	}
 	if exp, ok := claims["exp"].(float64); ok && time.Now().Unix() > int64(exp) {
 		return nil, errors.New("auth: token expired")
 	}
-	id := &Identity{Issuer: v.issuer, Roles: rolesClaim(claims), Claims: claims}
+	id := &Identity{Issuer: v.issuer, Roles: v.scopeRoles(aud, rolesClaim(claims)), Claims: claims}
 	id.Sub, _ = claims["sub"].(string)
 	id.Email, _ = claims["email"].(string)
 	id.Display, _ = claims["name"].(string)

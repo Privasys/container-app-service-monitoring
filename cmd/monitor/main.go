@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -124,7 +125,11 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var verifier auth.Verifier = auth.NewJWKSVerifier(cfg.Issuer, cfg.Audience)
+	jwks := auth.NewJWKSVerifier(cfg.Issuer, cfg.Audience).WithRoleNamespace(auth.PlatformNamespace)
+	if os.Getenv("MONITOR_OIDC_AUDIENCE") == "" {
+		jwks.WithAudiences(func() []string { return platformAudiences(mon) })
+	}
+	var verifier auth.Verifier = jwks
 	if cfg.DevAuth {
 		verifier = auth.DevVerifier{}
 		log.Warn("development authentication is enabled; tokens are not verified against the identity provider")
@@ -594,6 +599,37 @@ func watchMailCertificate(ctx context.Context, log *slog.Logger, dir string, cre
 			check()
 		}
 	}
+}
+
+// platformAudiences are the sign-in audiences of the platform this
+// monitor serves, read off its configured control plane: the test
+// platform signs its users in for "privasys-platform-test", and accepts
+// "privasys-platform" too while the test portal moves over. None (the
+// configured default) for production or before configuration.
+func platformAudiences(mon *core.Monitor) []string {
+	pc := mon.PlatformClockConfig()
+	if pc == nil {
+		return nil
+	}
+	return audiencesFor(pc.ManagementURL)
+}
+
+// audiencesFor is the sign-in audiences of the platform whose control
+// plane is at managementURL: none (the configured default) unless it is
+// one of the test platform's.
+func audiencesFor(managementURL string) []string {
+	u, err := url.Parse(managementURL)
+	if err != nil || !testControlPlanes[strings.ToLower(u.Hostname())] {
+		return nil
+	}
+	return []string{"privasys-platform-test", auth.PlatformNamespace}
+}
+
+// testControlPlanes are the test platform's control-plane hosts, by name:
+// a near miss is production.
+var testControlPlanes = map[string]bool{
+	"api.developer.test.privasys.org": true,
+	"api-test.developer.privasys.org": true,
 }
 
 // consoleURL is the app's Status tab in the portal of this environment.

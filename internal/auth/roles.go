@@ -124,8 +124,14 @@ const (
 	RoleAppMember     = "app-member"
 	RoleAppViewer     = "app-viewer"
 
+	// PlatformNamespace is the audience the role names below are written
+	// in. A deployment for another platform audience (the test platform's
+	// "privasys-platform-test") has its tokens' roles renamed into it by
+	// the verifier (JWKSVerifier.WithRoleNamespace).
+	PlatformNamespace = "privasys-platform"
+
 	// OIDCPlatformAdmin is the control plane's administrator role.
-	OIDCPlatformAdmin = "privasys-platform:admin"
+	OIDCPlatformAdmin = PlatformNamespace + ":admin"
 )
 
 // AppRoles is the role model of an app tenant.

@@ -11,7 +11,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
@@ -73,9 +72,9 @@ func (s *Server) accountAccess(w http.ResponseWriter, r *http.Request) (accountI
 		switch {
 		case role == auth.OIDCPlatformAdmin:
 			admin = true
-		case strings.HasSuffix(role, ":account:"+key+":admin"):
+		case role == auth.PlatformNamespace+":account:"+key+":admin":
 			admin = true
-		case strings.HasSuffix(role, ":account:"+key+":member"):
+		case role == auth.PlatformNamespace+":account:"+key+":member":
 			member = true
 		}
 	}

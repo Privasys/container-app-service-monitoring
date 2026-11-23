@@ -33,7 +33,7 @@ privasys apps configure <app-id> \
 | `PORT` | injected by the platform. Required; there is no fallback, because a hard-coded port collides with a co-located app. |
 | `MONITOR_DATA_DIR` | the sealed volume. Default `/data`. |
 | `MONITOR_NAME`, `MONITOR_VANTAGE` | instance and observation-point names, which appear in checkpoints and readings. |
-| `MONITOR_OIDC_ISSUER`, `MONITOR_OIDC_AUDIENCE` | token verification. Default `https://privasys.id` / `privasys-platform`. |
+| `MONITOR_OIDC_ISSUER`, `MONITOR_OIDC_AUDIENCE` | token verification. Default `https://privasys.id` / `privasys-platform`. The audience may be a comma-separated list; a token for another platform audience (`privasys-platform-test`) has only its own `<audience>:` roles honoured, read as `privasys-platform:` roles. |
 | `MONITOR_CHECKPOINT_INTERVAL` | how often a quiet monitor anchors itself. Default 6h. |
 | `MONITOR_ROLLUP_LAG` | how far behind the present the folder works. Default 90s. |
 | `MONITOR_DEV_AUTH`, `MONITOR_SELF_CONFIGURE`, `MONITOR_PACK` | development only. Refused when the platform's container credentials are present. |
