@@ -210,6 +210,7 @@ func run(log *slog.Logger) error {
 	}
 
 	server := api.NewServer(log, mon, verifier, roles, scheduler)
+	server.SignIn = func() api.SignIn { return platformSignIn(mon) }
 	server.MailCert = &api.MailCertificate{
 		Certificate: string(mailCred.CertificatePEM()), Thumbprint: mailCred.Thumbprint(),
 		NotAfter: mailCred.NotAfter().UTC().Format(time.RFC3339),
@@ -603,9 +604,9 @@ func watchMailCertificate(ctx context.Context, log *slog.Logger, dir string, cre
 
 // platformAudiences are the sign-in audiences of the platform this
 // monitor serves, read off its configured control plane: the test
-// platform signs its users in for "privasys-platform-test", and accepts
-// "privasys-platform" too while the test portal moves over. None (the
-// configured default) for production or before configuration.
+// platform's monitor accepts "privasys-platform-test" only, never the
+// production audience. None (the configured default) for production or
+// before configuration, while the runtime still holds every request.
 func platformAudiences(mon *core.Monitor) []string {
 	pc := mon.PlatformClockConfig()
 	if pc == nil {
@@ -618,15 +619,39 @@ func platformAudiences(mon *core.Monitor) []string {
 // plane is at managementURL: none (the configured default) unless it is
 // one of the test platform's.
 func audiencesFor(managementURL string) []string {
-	u, err := url.Parse(managementURL)
-	if err != nil || !testControlPlanes[strings.ToLower(u.Hostname())] {
+	if !onTestPlatform(managementURL) {
 		return nil
 	}
-	return []string{"privasys-platform-test", auth.PlatformNamespace}
+	return []string{testPlatformAudience}
+}
+
+// testPlatformAudience is the test platform's sign-in audience, and the
+// namespace of its roles.
+const testPlatformAudience = "privasys-platform-test"
+
+// onTestPlatform reports whether managementURL is a test control plane.
+func onTestPlatform(managementURL string) bool {
+	u, err := url.Parse(managementURL)
+	return err == nil && testControlPlanes[strings.ToLower(u.Hostname())]
+}
+
+// platformSignIn is how the site's pages sign people in: the test
+// platform's control plane and audience on a test monitor, production's
+// otherwise.
+func platformSignIn(mon *core.Monitor) api.SignIn {
+	pc := mon.PlatformClockConfig()
+	if pc == nil || !onTestPlatform(pc.ManagementURL) {
+		return api.ProductionSignIn
+	}
+	// The client stays production's until privasys.id keeps each
+	// platform's sessions apart under one client, or registers this
+	// site's origin with the test platform's client.
+	return api.SignIn{APIBase: "https://api.developer.test.privasys.org", ClientID: api.ProductionSignIn.ClientID, Audience: testPlatformAudience}
 }
 
 // testControlPlanes are the test platform's control-plane hosts, by name:
-// a near miss is production.
+// a near miss is production. The legacy api-test name stays: a monitor
+// configured with it must not fall back to the production audience.
 var testControlPlanes = map[string]bool{
 	"api.developer.test.privasys.org": true,
 	"api-test.developer.privasys.org": true,
@@ -639,7 +664,7 @@ func consoleURL(mon *core.Monitor, appID string) string {
 		return ""
 	}
 	portal := "https://developer.privasys.org"
-	if strings.Contains(pc.ManagementURL, "test") {
+	if onTestPlatform(pc.ManagementURL) {
 		portal = "https://developer.test.privasys.org"
 	}
 	return portal + "/dashboard/apps/" + appID + "/?tab=status"

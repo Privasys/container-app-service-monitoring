@@ -3,7 +3,10 @@
 
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestOnlyTheTestControlPlanesTakeTheTestAudience(t *testing.T) {
 	for url, test := range map[string]bool{
@@ -15,8 +18,12 @@ func TestOnlyTheTestControlPlanesTakeTheTestAudience(t *testing.T) {
 		"":            false,
 		"::not a url": false,
 	} {
-		if got := len(audiencesFor(url)) > 0; got != test {
-			t.Errorf("%q: test platform %v, want %v", url, got, test)
+		got := audiencesFor(url)
+		if test && !reflect.DeepEqual(got, []string{"privasys-platform-test"}) {
+			t.Errorf("%q: audiences %v, want the test audience only", url, got)
+		}
+		if !test && got != nil {
+			t.Errorf("%q: audiences %v, want the configured default", url, got)
 		}
 	}
 }

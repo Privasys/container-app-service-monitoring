@@ -96,6 +96,9 @@ type Server struct {
 	MailCert *MailCertificate
 	// TicketNotice tells one person about a ticket, by the channels they chose.
 	TicketNotice func(ctx context.Context, t *tenancy.Tenant, sub, subject, body string)
+	// SignIn is the platform the site's pages sign people in to
+	// (signin.go). Nil means production.
+	SignIn func() SignIn
 }
 
 // NewServer builds the surface.
@@ -143,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 
 	// The public status surface. No caller, no token: a status page
 	// behind a login is not a status page.
+	mux.HandleFunc("GET /api/v1/public/sign-in", s.publicSignIn)
 	mux.HandleFunc("GET /api/v1/public/services", s.publicServices)
 	mux.HandleFunc("GET /api/v1/public/status", s.publicStatus)
 	mux.HandleFunc("GET /api/v1/public/status/{slug}", s.publicStatus)

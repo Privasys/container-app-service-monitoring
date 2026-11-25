@@ -18,7 +18,6 @@ const app = account
   ? (rest[1] ? decodeURIComponent(rest[1]) : '')
   : ((parts[0] === 'support' || parts[0] === 'apps') && parts[1] ? decodeURIComponent(parts[1]) : '');
 const onSupportHost = location.hostname.startsWith('support.');
-const isTest = location.hostname.includes('.test.');
 
 // How a request's state reads to the person who opened it, and its colour.
 const STATUS = {
@@ -184,11 +183,20 @@ async function signIn() {
   await attempt(async () => {
     if (!window.Privasys || !window.Privasys.AuthFrame) throw new Error('The sign-in could not be loaded.');
     if (!frame) {
+      // The monitor says which platform it serves: its control plane, and
+      // the client and audience to ask for. Each platform has its own
+      // client, so a test page is never handed a production session.
+      const r = await fetch('/api/v1/public/sign-in', { headers: { accept: 'application/json' } });
+      if (!r.ok) throw new Error('The sign-in could not be loaded.');
+      const platform = await r.json();
+      if (!platform.api_base || !platform.client_id) throw new Error('The sign-in could not be loaded.');
       frame = new window.Privasys.AuthFrame({
-        apiBase: isTest ? 'https://api.developer.test.privasys.org' : 'https://api.developer.privasys.org',
+        apiBase: platform.api_base,
         authOrigin: 'https://privasys.id',
+        // rpId never changes: the wallet keys its sign-in credential on it.
         rpId: 'privasys.id',
-        clientId: 'privasys-platform',
+        clientId: platform.client_id,
+        ...(platform.audience ? { audience: platform.audience } : {}),
         appName: 'Privasys Support',
         brokerUrl: 'wss://relay.privasys.org/relay',
         // The name shows the team who is asking; nothing else is requested.
