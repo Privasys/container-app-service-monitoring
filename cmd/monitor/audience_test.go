@@ -5,6 +5,8 @@ package main
 
 import (
 	"reflect"
+
+	"github.com/Privasys/container-app-service-monitoring/internal/api"
 	"testing"
 )
 
@@ -24,6 +26,19 @@ func TestOnlyTheTestControlPlanesTakeTheTestAudience(t *testing.T) {
 		}
 		if !test && got != nil {
 			t.Errorf("%q: audiences %v, want the configured default", url, got)
+		}
+	}
+}
+
+func TestTheSignInFollowsTheControlPlane(t *testing.T) {
+	test := testSignIn("https://api.developer.test.privasys.org")
+	if test.ClientID != "privasys-platform-test" || test.Audience != "privasys-platform-test" ||
+		test.APIBase != "https://api.developer.test.privasys.org" {
+		t.Errorf("test sign-in: %+v", test)
+	}
+	for _, url := range []string{"https://api.developer.privasys.org", "https://api.developer.test.privasys.org.evil.example", ""} {
+		if got := testSignIn(url); got != api.ProductionSignIn {
+			t.Errorf("%q: sign-in %+v, want production's", url, got)
 		}
 	}
 }
