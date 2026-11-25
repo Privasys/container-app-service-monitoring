@@ -161,4 +161,11 @@ func TestTheAudienceOrderAndNearMissesDecideNothingByAccident(t *testing.T) {
 	if _, err := prod.Verify(ctx, iss.token(t, "privasys-platform-test", "privasys-platform-test:admin")); err == nil {
 		t.Fatal("a production monitor accepted a test-platform token")
 	}
+
+	// A monitor that cannot tell which platform it serves accepts no one.
+	lost := NewJWKSVerifier(iss.srv.URL, "privasys-platform").WithRoleNamespace(PlatformNamespace).
+		WithAudiences(func() []string { return []string{} })
+	if _, err := lost.Verify(ctx, iss.token(t, "privasys-platform", "privasys-platform:admin")); err == nil {
+		t.Fatal("a monitor that does not know its platform accepted a token")
+	}
 }

@@ -124,8 +124,9 @@ func (v *JWKSVerifier) WithRoleNamespace(ns string) *JWKSVerifier {
 
 // WithAudiences makes the accepted audiences whatever of returns when
 // a token is verified, falling back to the configured ones while it
-// returns none: a monitor learns which platform it serves from its
-// configuration, which arrives after the verifier is built.
+// returns nil: a monitor learns which platform it serves from its
+// configuration, which arrives after the verifier is built. A non-nil
+// empty list accepts no token at all.
 func (v *JWKSVerifier) WithAudiences(of func() []string) *JWKSVerifier {
 	v.audienceFor = of
 	return v
@@ -192,7 +193,10 @@ func (v *JWKSVerifier) Verify(ctx context.Context, token string) (*Identity, err
 	}
 	audiences := v.audiences
 	if v.audienceFor != nil {
-		if auds := v.audienceFor(); len(auds) > 0 {
+		if auds := v.audienceFor(); auds != nil {
+			if len(auds) == 0 {
+				return nil, errors.New("auth: this service does not know which platform it serves")
+			}
 			audiences = auds
 		}
 	}

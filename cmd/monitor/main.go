@@ -126,7 +126,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	jwks := auth.NewJWKSVerifier(cfg.Issuer, cfg.Audience).WithRoleNamespace(auth.PlatformNamespace)
-	if os.Getenv("MONITOR_OIDC_AUDIENCE") == "" {
+	if strings.TrimSpace(os.Getenv("MONITOR_OIDC_AUDIENCE")) == "" {
 		jwks.WithAudiences(func() []string { return platformAudiences(mon) })
 	}
 	var verifier auth.Verifier = jwks
@@ -619,10 +619,16 @@ func platformAudiences(mon *core.Monitor) []string {
 // plane is at managementURL: none (the configured default) unless it is
 // one of the test platform's.
 func audiencesFor(managementURL string) []string {
-	if !onTestPlatform(managementURL) {
+	switch platformOf(managementURL) {
+	case testPlatform:
+		return []string{testPlatformAudience}
+	case productionPlatform:
 		return nil
+	default:
+		// A control plane on neither list: accept no one rather than
+		// guess production.
+		return []string{}
 	}
-	return []string{testPlatformAudience}
 }
 
 // testPlatformAudience is the test platform's sign-in audience, and the
@@ -633,10 +639,37 @@ const testPlatformAudience = "privasys-platform-test"
 // privasys.id. Every test front's origin is registered on it.
 const testPlatformClient = "privasys-platform-test"
 
+type platformKind int
+
+const (
+	unknownPlatform platformKind = iota
+	productionPlatform
+	testPlatform
+)
+
+// platformOf names the platform whose control plane is at managementURL,
+// by exact host name: a near miss is neither.
+func platformOf(managementURL string) platformKind {
+	u, err := url.Parse(managementURL)
+	if err != nil {
+		return unknownPlatform
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	switch {
+	case testControlPlanes[host]:
+		return testPlatform
+	case host == productionControlPlane:
+		return productionPlatform
+	}
+	return unknownPlatform
+}
+
+// productionControlPlane is the production platform's control-plane host.
+const productionControlPlane = "api.developer.privasys.org"
+
 // onTestPlatform reports whether managementURL is a test control plane.
 func onTestPlatform(managementURL string) bool {
-	u, err := url.Parse(managementURL)
-	return err == nil && testControlPlanes[strings.ToLower(u.Hostname())]
+	return platformOf(managementURL) == testPlatform
 }
 
 // platformSignIn is how the site's pages sign people in: the test

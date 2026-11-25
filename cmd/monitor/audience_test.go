@@ -5,27 +5,26 @@ package main
 
 import (
 	"reflect"
+	"testing"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/api"
-	"testing"
 )
 
 func TestOnlyTheTestControlPlanesTakeTheTestAudience(t *testing.T) {
-	for url, test := range map[string]bool{
-		"https://api.developer.test.privasys.org":              true,
-		"https://API-TEST.developer.privasys.org":              true,
-		"https://api.developer.privasys.org":                   false,
-		"https://attestation.privasys.org":                     false,
-		"https://api.developer.test.privasys.org.evil.example": false,
-		"":            false,
-		"::not a url": false,
+	test := []string{"privasys-platform-test"}
+	for url, want := range map[string][]string{
+		"https://api.developer.test.privasys.org":              test,
+		"https://api.developer.test.privasys.org.":             test,
+		"https://API-TEST.developer.privasys.org":              test,
+		"https://api.developer.privasys.org":                   nil,
+		"https://api.developer.privasys.org.:443":              nil,
+		"https://attestation.privasys.org":                     {},
+		"https://api.developer.test.privasys.org.evil.example": {},
+		"":            {},
+		"::not a url": {},
 	} {
-		got := audiencesFor(url)
-		if test && !reflect.DeepEqual(got, []string{"privasys-platform-test"}) {
-			t.Errorf("%q: audiences %v, want the test audience only", url, got)
-		}
-		if !test && got != nil {
-			t.Errorf("%q: audiences %v, want the configured default", url, got)
+		if got := audiencesFor(url); !reflect.DeepEqual(got, want) || (got == nil) != (want == nil) {
+			t.Errorf("%q: audiences %#v, want %#v", url, got, want)
 		}
 	}
 }
