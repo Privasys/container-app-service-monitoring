@@ -93,7 +93,14 @@ type Service struct {
 type credCache struct {
 	server, token string
 	until         time.Time
+	// failed and retryAt hold a refusal, so the rest of a round does
+	// not ask again for every enclave it polls.
+	failed  error
+	retryAt time.Time
 }
+
+// credentialRetry is how long a refused credentials call is remembered.
+const credentialRetry = time.Minute
 
 // NewService builds the service. It does nothing until Apply is given a
 // configuration that turns it on.
@@ -241,11 +248,17 @@ func (s *Service) credentials(ctx context.Context) (string, string, error) {
 	if cached.token != "" && time.Now().Before(cached.until) {
 		return cached.server, cached.token, nil
 	}
+	if cached.failed != nil && time.Now().Before(cached.retryAt) {
+		return "", "", cached.failed
+	}
 	if platform == nil {
 		return "", "", errors.New("clock: the platform clock is off")
 	}
 	server, token, expires, err := platform.AttestationCredentials(ctx)
 	if err != nil {
+		s.mu.Lock()
+		s.creds.failed, s.creds.retryAt = err, time.Now().Add(credentialRetry)
+		s.mu.Unlock()
 		return "", "", err
 	}
 	until := time.Now().Add(5 * time.Minute)
