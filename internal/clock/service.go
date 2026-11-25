@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Privasys/container-app-service-monitoring/internal/backoff"
 	"github.com/Privasys/container-app-service-monitoring/internal/clock/timesource"
 	"github.com/Privasys/container-app-service-monitoring/internal/core"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
@@ -94,13 +95,19 @@ type credCache struct {
 	server, token string
 	until         time.Time
 	// failed and retryAt hold a refusal, so the rest of a round does
-	// not ask again for every enclave it polls.
+	// not ask again for every enclave it polls; retry spaces out the
+	// next attempts while the control plane keeps refusing.
 	failed  error
 	retryAt time.Time
+	retry   *backoff.Backoff
 }
 
-// credentialRetry is how long a refused credentials call is remembered.
-const credentialRetry = time.Minute
+// After a refused credentials call the clock waits about this long
+// before asking again, doubling per refusal up to the cap.
+const (
+	credentialRetryBase = 30 * time.Second
+	credentialRetryMax  = 15 * time.Minute
+)
 
 // NewService builds the service. It does nothing until Apply is given a
 // configuration that turns it on.
@@ -154,7 +161,7 @@ func (s *Service) Apply(cfg *core.PlatformClock) {
 	s.mu.Lock()
 	s.cfg, s.platform, s.poller = &c, platform, poller
 	s.cancel, s.done = cancelRun, make(chan struct{})
-	s.creds = credCache{}
+	s.creds = credCache{retry: backoff.New(credentialRetryBase, credentialRetryMax)}
 	done := s.done
 	s.mu.Unlock()
 
@@ -257,7 +264,10 @@ func (s *Service) credentials(ctx context.Context) (string, string, error) {
 	server, token, expires, err := platform.AttestationCredentials(ctx)
 	if err != nil {
 		s.mu.Lock()
-		s.creds.failed, s.creds.retryAt = err, time.Now().Add(credentialRetry)
+		if s.creds.retry == nil {
+			s.creds.retry = backoff.New(credentialRetryBase, credentialRetryMax)
+		}
+		s.creds.failed, s.creds.retryAt = err, time.Now().Add(s.creds.retry.Fail())
 		s.mu.Unlock()
 		return "", "", err
 	}
@@ -268,7 +278,11 @@ func (s *Service) credentials(ctx context.Context) (string, string, error) {
 		}
 	}
 	s.mu.Lock()
-	s.creds = credCache{server: server, token: token, until: until}
+	retry := s.creds.retry
+	if retry != nil {
+		retry.Succeed()
+	}
+	s.creds = credCache{server: server, token: token, until: until, retry: retry}
 	s.mu.Unlock()
 	return server, token, nil
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Privasys/container-app-service-monitoring/internal/auth"
+	"github.com/Privasys/container-app-service-monitoring/internal/backoff"
 	"github.com/Privasys/container-app-service-monitoring/internal/model"
 )
 
@@ -242,15 +243,20 @@ func (h *Host) Resolve(idOrName string) (string, bool) {
 // active, and addresses by name do not resolve until a listing succeeds.
 const syncRetry = 30 * time.Second
 
+// syncRetryMax caps the wait between listings while they keep failing.
+const syncRetryMax = 10 * time.Minute
+
 // RunSync lists the apps every interval until ctx ends, starting now.
 func (h *Host) RunSync(ctx context.Context, source AppSource, interval time.Duration) {
+	retry := backoff.New(syncRetry, syncRetryMax)
 	for {
 		wait := interval
 		apps, complete, err := source(ctx)
 		if err != nil {
-			h.log.Error("could not list the platform's apps", "error", err)
-			wait = syncRetry
+			wait = retry.Fail()
+			h.log.Error("could not list the platform's apps", "error", err, "retry_in", wait.Round(time.Second).String())
 		} else {
+			retry.Succeed()
 			h.Sync(apps, complete)
 		}
 		select {
